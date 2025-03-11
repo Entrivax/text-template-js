@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <script src="./text-template.js"></script>
+    <script>
+        const templateSrc = `Hello {{ if trim .Name }}{{ .Name }}
+        {{- else }}World{{ end }}!`
+        console.log('template:', templateSrc)
+        const template = Template.MustParse(templateSrc).withFuncs({
+            trim: (val) => {
+                if (typeof val !== 'string') {
+                    throw new Error('expected string value')
+                }
+                return val.trim()
+            }
+        })
+        console.log(template)
+        console.log(template.executeS({ Name: 'Test' }))
+    </script>
+</head>
+<body>
+    
+</body>
+</html>
