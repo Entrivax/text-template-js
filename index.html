@@ -6,19 +6,59 @@
     <title>Document</title>
     <script src="./text-template.js"></script>
     <script>
-        const templateSrc = `Hello {{ if trim .Name }}{{ .Name }}
-        {{- else }}World{{ end }}!`
-        console.log('template:', templateSrc)
-        const template = Template.MustParse(templateSrc).withFuncs({
-            trim: (val) => {
-                if (typeof val !== 'string') {
-                    throw new Error('expected string value')
+        {
+            const templateSrc = `Hello {{ if trim .Name }}{{ .Name }}
+            {{- else }}World{{ end }}!`
+            console.log('template:', templateSrc)
+            const template = Template.MustParse(templateSrc).withFuncs({
+                trim: (val) => {
+                    if (typeof val !== 'string') {
+                        throw new Error('expected string value')
+                    }
+                    return val.trim()
                 }
-                return val.trim()
-            }
-        })
-        console.log(template)
-        console.log(template.executeS({ Name: 'Test' }))
+            })
+            console.log(template)
+            console.log(template.executeS({ Name: 'Test' }))
+        }
+        console.log('-------------------------------');
+        {
+            const templateSrc = `There is {{if lt (len .Users) 2}}one user{{else}}{{ len .Users }} users{{end}}`
+            console.log('template:', templateSrc)
+            const template = Template.MustParse(templateSrc)
+            console.log(template)
+            console.log(template.executeS({ Name: 'Test', Users: ['Alice'] }))
+            console.log(template.executeS({ Name: 'Test', Users: ['Alice', 'Bob'] }))
+        }
+        console.log('-------------------------------');
+        {
+            const templateSrc = `Hello {{- range .Users }} {{ . }}{{ else }} World{{ end }}!`
+            console.log('template:', templateSrc)
+            const template = Template.MustParse(templateSrc)
+            console.log(template)
+            console.log(template.executeS({ Name: 'Test', Users: [] }))
+            console.log(template.executeS({ Name: 'Test', Users: ['Alice', 'Bob'] }))
+        }
+        console.log('-------------------------------');
+        {
+            const templateSrc = `Hello {{- range $user := .Users }} {{ $user }}{{ end }}!`
+            console.log('template:', templateSrc)
+            const template = Template.MustParse(templateSrc)
+            console.log(template)
+            console.log(template.executeS({ Name: 'Test', Users: ['Alice', 'Bob'] }))
+        }
+        console.log('-------------------------------');
+        {
+            const templateSrc = `Users:\n{{ range $i, $user := .Users }}  {{ add $i 1 }}. {{ $user }}\n{{ end }}`
+            console.log('template:', templateSrc)
+            const template = Template.MustParse(templateSrc).withFuncs({
+                add: (a, b) => {
+                    return a + b
+                }
+            })
+            console.log(template)
+            console.log(template.executeS({ Name: 'Test', Users: ['Alice', 'Bob'] }))
+        }
     </script>
 </head>
 <body>

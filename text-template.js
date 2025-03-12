@@ -491,11 +491,9 @@ Parser.prototype = {
                 case 'range':
                     return this._parseRange()
                 case 'break':
-                    this._emitError("unexpected break")
-                    return
+                    return this._parseBreak()
                 case 'continue':
-                    this._emitError("unexpected continue")
-                    return
+                    return this._parseContinue()
                 }
                 // TODO: Handle keywords
                 this.pos++
@@ -516,38 +514,6 @@ Parser.prototype = {
         }
     },
 
-    /*
-{ stringKind: "DATA", value: "Hello ", pos: 0, … }
-​{ stringKind: "ACTION_START", pos: 6, line: 0, … }
-​{ stringKind: "WHITESPACE", value: " ", pos: 8, … }
-​{ stringKind: "KEYWORD", value: "if", pos: 9, … }
-​{ stringKind: "WHITESPACE", value: " ", pos: 11, … }
-​{ stringKind: "IDENTIFIER", value: "trim", pos: 12, … }
-​{ stringKind: "WHITESPACE", value: " ", pos: 16, … }
-​{ stringKind: "DOT", value: ".", pos: 17, … }
-​{ stringKind: "IDENTIFIER", value: "Name", pos: 18, … }
-​{ stringKind: "WHITESPACE", value: " ", pos: 22, … }
-​​{ stringKind: "ACTION_END", pos: 23, line: 0, … }
-​​{ stringKind: "ACTION_START", pos: 25, line: 0, … }
-​​{ stringKind: "WHITESPACE", value: " ", pos: 27, … }
-​​{ stringKind: "DOT", value: ".", pos: 28, … }
-​​{ stringKind: "IDENTIFIER", value: "Name", pos: 29, … }
-​​{ stringKind: "WHITESPACE", value: " ", pos: 33, … }
-​​{ stringKind: "ACTION_END", pos: 34, line: 0, … }
-​​{ stringKind: "ACTION_START", pos: 45, line: 1, … }
-​​{ stringKind: "WHITESPACE", value: " ", pos: 48, … }
-​​{ stringKind: "KEYWORD", value: "else", pos: 49, … }
-​​{ stringKind: "WHITESPACE", value: " ", pos: 53, … }
-​​{ stringKind: "ACTION_END", pos: 54, line: 1, … }
-​​{ stringKind: "DATA", value: "World", pos: 56, … }
-​​{ stringKind: "ACTION_START", pos: 61, line: 1, … }
-​​{ stringKind: "WHITESPACE", value: " ", pos: 63, … }
-​​{ stringKind: "KEYWORD", value: "end", pos: 64, … }
-​​{ stringKind: "WHITESPACE", value: " ", pos: 67, … }
-​​{ stringKind: "ACTION_END", pos: 68, line: 1, … }
-​​{ stringKind: "DATA", value: "!", pos: 70, … }
-​​{ stringKind: "EOF", pos: 71, line: 1, … }
-*/
     _parseIf() {
         this.pos++
         const ifNodes = []
@@ -585,20 +551,106 @@ Parser.prototype = {
         return this._createIfNode(conditionNode, ifNodes, elseNodes)
     },
 
+    _parseRange() {
+        this._advanceToNonWhitespace()
+        let var1Token = undefined
+        let var2Token = undefined
+        parseLeftSide: {
+            if (this.tokens[this.pos].kind !== Lexer.TokenKind.IDENTIFIER || this.tokens[this.pos].value[0] !== Lexer.Chars.VARIABLE_PREFIX) {
+                break parseLeftSide
+            }
+            const tokenAfterFirst = this._peekToNonWhitespace()
+            if (!tokenAfterFirst) {
+                return
+            }
+            if (tokenAfterFirst.token.kind !== Lexer.TokenKind.COMMA && tokenAfterFirst.token.kind !== Lexer.TokenKind.DECLARE) {
+                break parseLeftSide
+            }
+            var1Token = this.tokens[this.pos]
+            this._advanceToNonWhitespace()
+            if (this.tokens[this.pos].kind === Lexer.TokenKind.COMMA) {
+                this._advanceToNonWhitespace()
+                let tmpVar2Token = this.tokens[this.pos]
+                if (tmpVar2Token.kind !== Lexer.TokenKind.IDENTIFIER || tmpVar2Token.value[0] !== Lexer.Chars.VARIABLE_PREFIX) {
+                    this._emitError("expected variable identifier")
+                    this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                    return
+                }
+                var2Token = tmpVar2Token
+                this._advanceToNonWhitespace()
+            }
+            if (this.tokens[this.pos].kind !== Lexer.TokenKind.DECLARE) {
+                this._emitError("expected :=")
+                this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                return
+            }
+            this.pos++
+        }
+        const pipelineNode = this._parsePipeline()
+        if (!pipelineNode) {
+            return
+        }
+        const truthyNodes = []
+        const falsyNodes = []
+        if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+            this._advanceToNext(Lexer.TokenKind.ACTION_END)
+        }
+        this.pos++
+        this._parseNodes(truthyNodes, true)
+        if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD) {
+            if (this.tokens[this.pos].value === 'else') {
+                this._advanceToNonWhitespace()
+                if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD && this.tokens[this.pos].value === 'if') {
+                    elseNodes.push(this._parseIf())
+                } else {
+                    if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+                        this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                    }
+                    this.pos++
+                    this._parseNodes(falsyNodes, true)
+                }
+            }
+
+            if (this.tokens[this.pos].value === 'end') {
+                this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+                    this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                }
+                this.pos++
+            }
+        }
+
+        if (var2Token) {
+            return this._createRangeNode(var2Token, var1Token, pipelineNode, truthyNodes, falsyNodes)
+        }
+        return this._createRangeNode(var1Token, undefined, pipelineNode, truthyNodes, falsyNodes)
+    },
+
+    _parseBreak() {
+        this._advanceToNext(Lexer.TokenKind.ACTION_END)
+        return this._createBreakNode()
+    },
+    _parseContinue() {
+        this._advanceToNext(Lexer.TokenKind.ACTION_END)
+        return this._createContinueNode()
+    },
+
     _tryParseAssign() {
         const varToken = this.tokens[this.pos]
-        if (varToken.value[0] !== '$') {
+        if (varToken.value[0] !== Lexer.Chars.VARIABLE_PREFIX) {
             return { success: false }
         }
         this._advanceToNonWhitespace()
         let declareNew = null
-        if (varToken.kind === Lexer.TokenKind.EQUAL) {
+        if (this.tokens[this.pos].kind === Lexer.TokenKind.EQUAL) {
             declareNew = false
-        } else if (varToken.kind === Lexer.TokenKind.DECLARE) {
+        } else if (this.tokens[this.pos].kind === Lexer.TokenKind.DECLARE) {
             declareNew = true
+        } else {
+            return { success: false }
         }
         if (declareNew === null) {
-            this._emitError("unexpected token " + varToken.kind)
+            this._emitError("unexpected token " + varToken.stringKind)
             return { success: false, error: true }
         }
         const pipelineNode = this._parsePipeline()
@@ -629,7 +681,7 @@ Parser.prototype = {
                 break
             case Lexer.TokenKind.PAREN_OPEN:
                 this.pos++
-                this.args.push(this._parsePipeline())
+                args.push(this._parsePipeline())
                 break
             case Lexer.TokenKind.PAREN_CLOSE:
                 this.pos++
@@ -641,19 +693,19 @@ Parser.prototype = {
                 break
             case Lexer.TokenKind.STRING:
                 this.pos++
-                this.args.push(this._createConstantNode(token.value))
+                args.push(this._createConstantNode(token.value))
                 break
             case Lexer.TokenKind.BOOL:
                 this.pos++
-                this.args.push(this._createConstantNode(token.value === "true"))
+                args.push(this._createConstantNode(token.value === "true"))
                 break
             case Lexer.TokenKind.NUMBER:
                 this.pos++
-                this.args.push(this._createConstantNode(+token.value))
+                args.push(this._createConstantNode(+token.value))
                 break
             case Lexer.TokenKind.NIL:
                 this.pos++
-                this.args.push(this._createConstantNode(null))
+                args.push(this._createConstantNode(null))
                 break
             case Lexer.TokenKind.ACTION_END:
                 break parsingLoop
@@ -758,6 +810,18 @@ Parser.prototype = {
         return new IfNode(conditionPipelineNode, ifNodes, elseNodes)
     },
 
+    _createRangeNode(elementToken, indexToken, pipelineNode, truthyNodes, falsyNodes) {
+        return new RangeNode(elementToken, indexToken, pipelineNode, truthyNodes, falsyNodes)
+    },
+
+    _createBreakNode() {
+        return new BreakNode()
+    },
+
+    _createContinueNode() {
+        return new ContinueNode()
+    },
+
     _advanceToNonWhitespace() {
         this.pos++
         for (;this.pos <= this.tokens.length && this.tokens[this.pos].kind === Lexer.TokenKind.WHITESPACE && this.tokens[this.pos].kind !== Lexer.TokenKind.EOF; this.pos++) {}
@@ -771,7 +835,7 @@ Parser.prototype = {
     _peekToNonWhitespace() {
         let i = this.pos + 1
         for (;i <= this.tokens.length && this.tokens[i].kind === Lexer.TokenKind.WHITESPACE && this.tokens[i].kind !== Lexer.TokenKind.EOF; i++) {}
-        if (i >= this.tokens.length || this.tokens[i].kind === Lexer.TokenKind.WHITESPACE || this.tokens[i].kind !== Lexer.TokenKind.EOF) {
+        if (i >= this.tokens.length || this.tokens[i].kind === Lexer.TokenKind.WHITESPACE || this.tokens[i].kind === Lexer.TokenKind.EOF) {
             return null
         }
         return {
@@ -858,7 +922,7 @@ PipelineNode.prototype = {
     /**
      * @param {ScopeStack} stack 
      */
-    evalPipeline(stack, pipedValue) {
+    eval(stack, pipedValue) {
         let piping = pipedValue
         for (let i = 0; i < this.pipes.length; i++) {
             const currentPipe = this.pipes[i]
@@ -876,7 +940,7 @@ PipelineNode.prototype = {
     },
 
     executeS(stack) {
-        return this.evalPipeline(stack)
+        return this.eval(stack)
     }
 }
 
@@ -888,11 +952,11 @@ function ConstantNode(value) {
 }
 ConstantNode.prototype = {
     eval() {
-        return value
+        return this.value
     },
 
     execute() {
-        return value
+        return this.value
     }
 }
 
@@ -941,7 +1005,7 @@ IfNode.prototype = {
      * @param {ScopeStack} stack 
      */
     executeS(stack) {
-        const value = this.conditionPipelineNode.evalPipeline(stack)
+        const value = this.conditionPipelineNode.eval(stack)
         let nodeList = this.ifNodes
         if (!Template._isTrue(value)) {
             nodeList = this.elseNodes
@@ -949,8 +1013,105 @@ IfNode.prototype = {
         let out = ''
         for (let i = 0; i < nodeList.length; i++) {
             out += nodeList[i].executeS(stack)
+            if (stack.getMark()) {
+                return out
+            }
         }
         return out
+    }
+}
+
+/**
+ * 
+ * @param {Token | undefined} elementToken 
+ * @param {Token | undefined} indexToken 
+ * @param {PipelineNode} pipelineNode 
+ * @param {RootTemplateNode[]} truthyNodes 
+ * @param {RootTemplateNode[]} falsyNodes 
+ */
+function RangeNode(elementToken, indexToken, pipelineNode, truthyNodes, falsyNodes) {
+    this.elementToken = elementToken
+    this.indexToken = indexToken
+    this.pipelineNode = pipelineNode
+    this.truthyNodes = truthyNodes
+    this.falsyNodes = falsyNodes
+}
+RangeNode.prototype = {
+    /**
+     * @param {ScopeStack} stack 
+     */
+    executeS(stack) {
+        const array = this.pipelineNode.eval(stack)
+        if (!Template._isTrue(array)) {
+            let out = ''
+            for (let i = 0; i < this.falsyNodes.length; i++) {
+                out += this.falsyNodes[i].executeS(stack)
+            }
+            return out
+        }
+        let out = ''
+        range: for (let i = 0; i < array.length; i++) {
+            const element = array[i]
+            if (this.elementToken === undefined) {
+                stack.push(element)
+            } else {
+                stack.push(undefined)
+                stack.setVariable(this.elementToken.value, element)
+                if (this.indexToken !== undefined) {
+                    stack.setVariable(this.indexToken.value, i)
+                }
+            }
+
+            for (let j = 0; j < this.truthyNodes.length; j++) {
+                out += this.truthyNodes[j].executeS(stack)
+                const mark = stack.getMark()
+                if (mark === 'continue') {
+                    stack.clearMark()
+                    break
+                }
+                if (mark === 'break') {
+                    stack.clearMark()
+                    stack.pop()
+                    break range
+                }
+            }
+
+            stack.pop()
+        }
+        return out
+    }
+}
+
+function BreakNode() {}
+BreakNode.prototype = {
+    /**
+     * @param {ScopeStack} stack 
+     */
+    eval(stack) {
+        stack.markBreak()
+    },
+    /**
+     * @param {ScopeStack} stack 
+     */
+    executeS(stack) {
+        this.eval(stack)
+        return ''
+    }
+}
+function ContinueNode() {}
+ContinueNode.prototype = {
+    /**
+     * @param {ScopeStack} stack 
+     */
+    eval(stack) {
+        stack.markContinue()
+    },
+    /**
+     * @param {ScopeStack} stack 
+     */
+    executeS(stack) {
+        this.eval(stack)
+        return ''
     }
 }
 
@@ -961,6 +1122,7 @@ IfNode.prototype = {
 function Template(nodes) {
     this.nodes = nodes
     this.variablesContext = {}
+    this._setupDefaultFuncs()
 }
 
 Template.MustParse = function(src) {
@@ -986,6 +1148,26 @@ Template._isTrue = function(value) {
 }
 
 Template.prototype = {
+    _setupDefaultFuncs() {
+        this.withFuncs({
+            "eq": (a, b) => a === b,
+            "ne": (a, b) => a !== b,
+            "lt": (a, b) => a < b,
+            "le": (a, b) => a <= b,
+            "gt": (a, b) => a > b,
+            "ge": (a, b) => a >= b,
+            "index": (a, i) => a[i],
+            "len": (a) => {
+                if (typeof a === 'string' || Array.isArray(a)) {
+                    return a.length
+                }
+                if (a instanceof Map) {
+                    return a.size
+                }
+                return 0
+            },
+        })
+    },
     withFuncs(funcMap) {
         for (let k in funcMap) {
             if (typeof funcMap[k] === 'function') {
@@ -1006,6 +1188,7 @@ Template.prototype = {
 
 function ScopeStack(initialDot, initialVariables) {
     this._stack = [this._newScope(initialDot, initialVariables)]
+    this._mark = null
 }
 ScopeStack.prototype = {
     _newScope(dot, variables) {
@@ -1033,6 +1216,25 @@ ScopeStack.prototype = {
             }
         }
         return undefined
+    },
+
+    getMark() {
+        return this._mark
+    },
+
+    setVariable(name, value) {
+        this._stack[this._stack.length - 1].variables[name] = value
+    },
+
+    markBreak() {
+        this._mark = 'break'
+    },
+    markContinue() {
+        this._mark = 'continue'
+    },
+
+    clearMark() {
+        this._mark = null
     },
 
     push(dotValue) {
