@@ -507,7 +507,7 @@ Parser.prototype = {
                     return this._parsePipeline()
                 }
 
-                break
+                return result.node
             default:
                 return this._parsePipeline()
             }
@@ -653,6 +653,7 @@ Parser.prototype = {
             this._emitError("unexpected token " + varToken.stringKind)
             return { success: false, error: true }
         }
+        this._advanceToNonWhitespace()
         const pipelineNode = this._parsePipeline()
         if (declareNew) {
             return {
@@ -822,6 +823,13 @@ Parser.prototype = {
         return new ContinueNode()
     },
 
+    _createDeclareNode(varToken, pipelineNode) {
+        return new DeclareNode(varToken, pipelineNode)
+    },
+    _createAssignNode(varToken, pipelineNode) {
+        return new AssignNode(varToken, pipelineNode)
+    },
+
     _advanceToNonWhitespace() {
         this.pos++
         for (;this.pos <= this.tokens.length && this.tokens[this.pos].kind === Lexer.TokenKind.WHITESPACE && this.tokens[this.pos].kind !== Lexer.TokenKind.EOF; this.pos++) {}
@@ -898,6 +906,55 @@ ContextNode.prototype = {
      */
     evalStack(stack) {
         return stack.getDot()
+    }
+}
+
+/**
+ * 
+ * @param {Token} varToken 
+ * @param {PipelineNode} pipelineNode 
+ */
+function DeclareNode(varToken, pipelineNode) {
+    this.varToken = varToken
+    this.pipelineNode = pipelineNode
+}
+DeclareNode.prototype = {
+    /**
+     * @param {ScopeStack} stack 
+     */
+    eval(stack) {
+        stack.defineVariable(this.varToken.value, this.pipelineNode.eval(stack))
+    },
+    /**
+     * @param {ScopeStack} stack 
+     */
+    executeS(stack) {
+        this.eval(stack)
+        return ''
+    }
+}
+/**
+ * 
+ * @param {Token} varToken 
+ * @param {PipelineNode} pipelineNode 
+ */
+function AssignNode(varToken, pipelineNode) {
+    this.varToken = varToken
+    this.pipelineNode = pipelineNode
+}
+AssignNode.prototype = {
+    /**
+     * @param {ScopeStack} stack 
+     */
+    eval(stack) {
+        stack.setVariable(this.varToken.value, this.pipelineNode.eval(stack))
+    },
+    /**
+     * @param {ScopeStack} stack 
+     */
+    executeS(stack) {
+        this.eval(stack)
+        return ''
     }
 }
 
@@ -1056,9 +1113,9 @@ RangeNode.prototype = {
                 stack.push(element)
             } else {
                 stack.push(undefined)
-                stack.setVariable(this.elementToken.value, element)
+                stack.defineVariable(this.elementToken.value, element)
                 if (this.indexToken !== undefined) {
-                    stack.setVariable(this.indexToken.value, i)
+                    stack.defineVariable(this.indexToken.value, i)
                 }
             }
 
@@ -1222,8 +1279,29 @@ ScopeStack.prototype = {
         return this._mark
     },
 
-    setVariable(name, value) {
+    _getVariableStackIndex(name) {
+        for (let i = this._stack.length - 1; i >= 0; i--) {
+            if (name in this._stack[i].variables) {
+                return i
+            }
+        }
+        return -1
+    },
+
+    defineVariable(name, value) {
+        const stackIndex = this._getVariableStackIndex(name)
+        if (stackIndex === this._stack.length - 1) {
+            throw new Error(`already defined variable ${name}`)
+        }
         this._stack[this._stack.length - 1].variables[name] = value
+    },
+
+    setVariable(name, value) {
+        const stackIndex = this._getVariableStackIndex(name)
+        if (stackIndex === -1) {
+            throw new Error(`undefined variable ${name}`)
+        }
+        this._stack[stackIndex].variables[name] = value
     },
 
     markBreak() {
