@@ -90,6 +90,23 @@
             console.log('context:', context)
             console.log(template.executeS(context))
         }
+        console.log('-------------------------------');
+        {
+            const templateSrc = `Hello {{ with trim .Name }}{{ . }}{{ end }}`
+            const context = { Name: "  Bob  " }
+            const template = Template.MustParse(templateSrc).withFuncs({
+                trim: (val) => {
+                    if (typeof val !== 'string') {
+                        throw new Error('expected string value')
+                    }
+                    return val.trim()
+                }
+            })
+            console.log(template)
+            console.log('template:', templateSrc);
+            console.log('context:', context)
+            console.log(template.executeS(context))
+        }
     </script>
 </head>
 <body>

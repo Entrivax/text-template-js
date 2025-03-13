@@ -494,6 +494,8 @@ Parser.prototype = {
                     return this._parseBreak()
                 case 'continue':
                     return this._parseContinue()
+                case 'with':
+                    return this._parseWith()
                 }
                 // TODO: Handle keywords
                 this.pos++
@@ -541,6 +543,57 @@ Parser.prototype = {
 
             if (this.tokens[this.pos].value === 'end') {
                 this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                this.pos++
+            }
+        }
+
+        return this._createIfNode(conditionNode, ifNodes, elseNodes)
+    },
+
+    _parseWith() {
+        this._advanceToNonWhitespace()
+        const truthyNodes = []
+        const falsyNodes = undefined
+        if (this.tokens[this.pos].kind !== Lexer.TokenKind.IDENTIFIER && this.tokens[this.pos].kind !== Lexer.TokenKind.DOT) {
+            this._emitError("expected pipeline or declaration")
+            this._advanceToNext(Lexer.TokenKind.ACTION_END)
+            return
+        }
+        const currentPos = this.pos
+        const assignResult = this._tryParseAssign()
+        let pipelineNode = undefined
+        if (!assignResult.success && !assignResult.error) {
+            this.pos = currentPos
+            pipelineNode = this._parsePipeline()
+        }
+        if (assignResult.node instanceof AssignNode) {
+            this._emitError("expected := instead of =")
+            this._advanceToNext(Lexer.TokenKind.ACTION_END)
+            return
+        }
+
+        if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+            this._advanceToNext(Lexer.TokenKind.ACTION_END)
+        }
+        this.pos++
+        this._parseNodes(truthyNodes, true)
+        if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD) {
+            if (this.tokens[this.pos].value === 'else') {
+                this._advanceToNonWhitespace()
+                falsyNodes = []
+                if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD && this.tokens[this.pos].value === 'with') {
+                    falsyNodes.push(this._parseWith())
+                } else {
+                    if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+                        this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                    }
+                    this.pos++
+                    this._parseNodes(falsyNodes, true)
+                }
+            }
+
+            if (this.tokens[this.pos].value === 'end') {
+                this._advanceToNext(Lexer.TokenKind.ACTION_END)
                 if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
                     this._advanceToNext(Lexer.TokenKind.ACTION_END)
                 }
@@ -548,7 +601,7 @@ Parser.prototype = {
             }
         }
 
-        return this._createIfNode(conditionNode, ifNodes, elseNodes)
+        return this._createWithNode(assignResult.node, pipelineNode, truthyNodes, falsyNodes)
     },
 
     _parseRange() {
@@ -635,6 +688,9 @@ Parser.prototype = {
         return this._createContinueNode()
     },
 
+    /**
+     * @returns {{ node?: AssignNode | DeclareNode, success: boolean, error?: boolean }}
+     */
     _tryParseAssign() {
         const varToken = this.tokens[this.pos]
         if (varToken.value[0] !== Lexer.Chars.VARIABLE_PREFIX) {
@@ -811,6 +867,10 @@ Parser.prototype = {
         return new IfNode(conditionPipelineNode, ifNodes, elseNodes)
     },
 
+    _createWithNode(assignNode, pipelineNode, truthyNodes, falsyNodes) {
+        return new WithNode(assignNode, pipelineNode, truthyNodes, falsyNodes)
+    },
+
     _createRangeNode(elementToken, indexToken, pipelineNode, truthyNodes, falsyNodes) {
         return new RangeNode(elementToken, indexToken, pipelineNode, truthyNodes, falsyNodes)
     },
@@ -895,7 +955,11 @@ IdentifierNode.prototype = {
      * @param {ScopeStack} stack 
      */
     evalStack(stack) {
-        return stack.getVariable(this.name)
+        const value = stack.getVariable(this.name)
+        if (value === undefined) {
+            throw new Error("undefined variable " + this.name)
+        }
+        return value
     },
 }
 
@@ -1064,7 +1128,7 @@ IfNode.prototype = {
     executeS(stack) {
         const value = this.conditionPipelineNode.eval(stack)
         let nodeList = this.ifNodes
-        if (!Template._isTrue(value)) {
+        if (!Template.isTrue(value)) {
             nodeList = this.elseNodes
         }
         let out = ''
@@ -1075,6 +1139,71 @@ IfNode.prototype = {
             }
         }
         return out
+    }
+}
+
+/**
+ * 
+ * @param {AssignNode | undefined} assignNode 
+ * @param {PipelineNode} pipelineNode 
+ * @param {RootTemplateNode[]} truthyNodes 
+ * @param {RootTemplateNode[] | undefined} falsyNodes 
+ * @returns 
+ */
+function WithNode(assignNode, pipelineNode, truthyNodes, falsyNodes) {
+    this.assignNode = assignNode
+    this.pipelineNode = pipelineNode
+    this.truthyNodes = truthyNodes
+    this.falsyNodes = falsyNodes
+}
+WithNode.prototype = {
+    /**
+     * 
+     * @param {RootTemplateNode[]} nodeList 
+     * @param {ScopeStack} stack 
+     * @returns 
+     */
+    _evalNodes(nodeList, stack) {
+        let out = ''
+        for (let i = 0; i < nodeList.length; i++) {
+            out += nodeList[i].executeS(stack)
+            if (stack.getMark()) {
+                return out
+            }
+        }
+        return out
+    },
+    /**
+     * @param {ScopeStack} stack 
+     */
+    eval(stack) {
+        if (this.assignNode !== undefined) {
+            stack.push(undefined)
+            this.assignNode.eval(stack)
+            const out = this._evalNodes(this.truthyNodes, stack)
+            stack.pop()
+            return out
+        } else if (this.pipelineNode !== undefined) {
+            const value = this.pipelineNode.eval(stack)
+            let nodeList = this.truthyNodes
+            if (!Template.isTrue(value)) {
+                nodeList = this.falsyNodes
+            }
+            if (nodeList) {
+                stack.push(value)
+                const out = this._evalNodes(nodeList, stack)
+                stack.pop()
+                return out
+            }
+            return ''
+        }
+        throw new Error("invalid with node")
+    },
+    /**
+     * @param {ScopeStack} stack 
+     */
+    executeS(stack) {
+        return this.eval(stack)
     }
 }
 
@@ -1099,7 +1228,7 @@ RangeNode.prototype = {
      */
     executeS(stack) {
         const array = this.pipelineNode.eval(stack)
-        if (!Template._isTrue(array)) {
+        if (!Template.isTrue(array)) {
             let out = ''
             for (let i = 0; i < this.falsyNodes.length; i++) {
                 out += this.falsyNodes[i].executeS(stack)
@@ -1194,7 +1323,7 @@ Template.MustParse = function(src) {
     return new Template(parser.nodes)
 }
 
-Template._isTrue = function(value) {
+Template.isTrue = function(value) {
     if (Array.isArray(value) || typeof value === 'string') {
         return value.length > 0
     }
@@ -1207,7 +1336,33 @@ Template._isTrue = function(value) {
 Template.prototype = {
     _setupDefaultFuncs() {
         this.withFuncs({
-            "eq": (a, b) => a === b,
+            "eq": (...args) => {
+                if (args.length < 2) {
+                    throw new Error("eq requires at least 2 arguments")
+                }
+                for (let i = 1; i < args.length; i++) {
+                    if (args[i] !== args[i - 1]) {
+                        return false
+                    }
+                }
+                return true
+            },
+            "and": (...args) => {
+                for (let i = 0; i < args.length; i++) {
+                    if (!Template.isTrue(args[i])) {
+                        return args[i]
+                    }
+                }
+                return args[args.length - 1]
+            },
+            "or": (...args) => {
+                for (let i = 0; i < args.length; i++) {
+                    if (Template.isTrue(args[i])) {
+                        return args[i]
+                    }
+                }
+                return args[args.length - 1]
+            },
             "ne": (a, b) => a !== b,
             "lt": (a, b) => a < b,
             "le": (a, b) => a <= b,
