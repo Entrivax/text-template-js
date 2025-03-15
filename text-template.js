@@ -77,6 +77,7 @@ Lexer.ReservedKeywords = new Set([
     "continue",
     "template",
     "block",
+    "define",
     "with",
 ])
 
@@ -155,7 +156,10 @@ Lexer.prototype = {
         }
         let trimNextDataBlock = false
 
+        let eof = true
+
         for (;this.pos < this.src.length;) {
+            eof = true
             const actionEnding = this._getEndingAction()
             if (actionEnding.isEndingAction) {
                 if (actionEnding.hasTrimChar) {
@@ -163,6 +167,7 @@ Lexer.prototype = {
                 }
                 this.tokens.push(this._createToken(Lexer.TokenKind.ACTION_END, '', this.pos, this.line, this.col))
                 this._advanceN(Lexer.Chars.ACTION_DELIMITER_END.length + +actionEnding.hasTrimChar)
+                eof = false
                 break
             }
 
@@ -195,6 +200,13 @@ Lexer.prototype = {
                 this._handleIdentifierOrKeyword()
                 continue
             }
+
+            this._emitError("unexpected character " + this.src[this.pos])
+            return
+        }
+
+        if (eof) {
+            this._emitError("unexpected EOF")
         }
 
         return trimNextDataBlock
@@ -421,6 +433,8 @@ function Parser(src, tokens) {
     this.nodes = []
     this.pos = 0
     this.errors = []
+    /** @type {Record<string | symbol, Node[]>} */
+    this.templates = {}
 }
 
 /** @typedef {{ executeS: (contextData: ScopeStack) => string }} RootTemplateNode */
@@ -435,15 +449,18 @@ Parser.parse = function(src, tokens) {
     return parser
 }
 
+Parser.ROOT_TEMPLATE = Symbol('root template')
+
 Parser.prototype = {
     parse() {
-        this._parseNodes(this.nodes)
+        this._parseNodes(this.nodes, true)
+        this.templates[Parser.ROOT_TEMPLATE] = this.nodes
     },
 
     /**
      * @param {Node[]} nodes 
      */
-    _parseNodes(nodes, stopAtElseEnd = false) {
+    _parseNodes(nodes, rootLevel = false) {
         for (;this.pos <= this.tokens.length && this.tokens[this.pos].kind !== Lexer.TokenKind.EOF;) {
             const token = this.tokens[this.pos]
             if (token.kind === Lexer.TokenKind.DATA) {
@@ -452,7 +469,7 @@ Parser.prototype = {
                 continue
             }
             if (token.kind === Lexer.TokenKind.ACTION_START) {
-                const pipelineNode = this._parseAction(stopAtElseEnd)
+                const pipelineNode = this._parseAction(rootLevel)
                 if (pipelineNode) {
                     nodes.push(pipelineNode)
                 }
@@ -463,13 +480,13 @@ Parser.prototype = {
                 continue
             }
 
-            if (stopAtElseEnd && token.kind === Lexer.TokenKind.KEYWORD && (token.value === 'end' || token.value === 'else')) {
+            if (token.kind === Lexer.TokenKind.KEYWORD && (token.value === 'end' || token.value === 'else')) {
                 return
             }
         }
     },
 
-    _parseAction() {
+    _parseAction(rootLevel = false) {
         this._advanceToNonWhitespace()
 
         for (;this.pos <= this.tokens.length;) {
@@ -496,8 +513,18 @@ Parser.prototype = {
                     return this._parseContinue()
                 case 'with':
                     return this._parseWith()
+                case 'block':
+                    return this._parseBlock()
+                case 'template':
+                    return this._parseTemplate()
+                case 'define':
+                    if (!rootLevel) {
+                        this._emitError("define can only be used at root level")
+                        this.pos++
+                        return
+                    }
+                    return this._parseDefine()
                 }
-                // TODO: Handle keywords
                 this.pos++
                 break
 
@@ -516,7 +543,7 @@ Parser.prototype = {
         }
     },
 
-    _parseIf() {
+    _parseIf(isRange = false) {
         this.pos++
         const ifNodes = []
         const elseNodes = []
@@ -526,25 +553,33 @@ Parser.prototype = {
             this._advanceToNext(Lexer.TokenKind.ACTION_END)
         }
         this.pos++
-        this._parseNodes(ifNodes, true)
+        this._parseNodes(ifNodes)
         if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD) {
-            if (this.tokens[this.pos].value === 'else') {
+            let endHandled = false
+            if (!isRange && this.tokens[this.pos].value === 'else') {
                 this._advanceToNonWhitespace()
                 if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD && this.tokens[this.pos].value === 'if') {
                     elseNodes.push(this._parseIf())
+                    endHandled = true
                 } else {
                     if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
                         this._advanceToNext(Lexer.TokenKind.ACTION_END)
                     }
                     this.pos++
-                    this._parseNodes(elseNodes, true)
+                    this._parseNodes(elseNodes)
                 }
             }
-
-            if (this.tokens[this.pos].value === 'end') {
+            if (!endHandled && this.tokens[this.pos].kind === Lexer.TokenKind.EOF) {
+                this._emitError('not terminated ' + (isRange ? 'range' : 'if'))
+                return
+            }
+            if (!endHandled && this.tokens[this.pos].value === 'end') {
                 this._advanceToNext(Lexer.TokenKind.ACTION_END)
                 this.pos++
             }
+        } else if (this.tokens[this.pos].kind === Lexer.TokenKind.EOF) {
+            this._emitError('not terminated ' + (isRange ? 'range' : 'if'))
+            return
         }
 
         return this._createIfNode(conditionNode, ifNodes, elseNodes)
@@ -576,7 +611,7 @@ Parser.prototype = {
             this._advanceToNext(Lexer.TokenKind.ACTION_END)
         }
         this.pos++
-        this._parseNodes(truthyNodes, true)
+        this._parseNodes(truthyNodes)
         if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD) {
             if (this.tokens[this.pos].value === 'else') {
                 this._advanceToNonWhitespace()
@@ -588,10 +623,14 @@ Parser.prototype = {
                         this._advanceToNext(Lexer.TokenKind.ACTION_END)
                     }
                     this.pos++
-                    this._parseNodes(falsyNodes, true)
+                    this._parseNodes(falsyNodes)
                 }
             }
 
+            if (this.tokens[this.pos].kind === Lexer.TokenKind.EOF) {
+                this._emitError('not terminated with')
+                return
+            }
             if (this.tokens[this.pos].value === 'end') {
                 this._advanceToNext(Lexer.TokenKind.ACTION_END)
                 if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
@@ -599,9 +638,113 @@ Parser.prototype = {
                 }
                 this.pos++
             }
+        } else {
+            this._emitError('not terminated with')
+            return
         }
 
         return this._createWithNode(assignResult.node, pipelineNode, truthyNodes, falsyNodes)
+    },
+
+    _parseDefine() {
+        this._advanceToNonWhitespace()
+        const nodes = []
+        if (this.tokens[this.pos].kind !== Lexer.TokenKind.STRING) {
+            this._emitError("expected string")
+            this._advanceToNext(Lexer.TokenKind.ACTION_END)
+        }
+        const templateName = this.tokens[this.pos].value
+
+        if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+            this._advanceToNext(Lexer.TokenKind.ACTION_END)
+        }
+        this.pos++
+
+        this._parseNodes(nodes)
+        if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD) {
+            if (this.tokens[this.pos].value === 'end') {
+                this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                if (this.tokens[this.pos].kind === Lexer.TokenKind.EOF) {
+                    this._emitError('not terminated define')
+                    return
+                }
+                if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+                    this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                }
+                this.pos++
+            }
+        } else {
+            this._emitError('not terminated define')
+            return
+        }
+
+        this.templates[templateName] = nodes
+        return undefined
+    },
+
+    _parseTemplate() {
+        this._advanceToNonWhitespace()
+        if (this.tokens[this.pos].kind !== Lexer.TokenKind.STRING) {
+            this._emitError("expected string")
+            this._advanceToNext(Lexer.TokenKind.ACTION_END)
+        }
+        const templateName = this.tokens[this.pos].value
+        this._advanceToNonWhitespace()
+        let pipelineNode = undefined
+        if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+            pipelineNode = this._parsePipeline()
+            if (!pipelineNode) {
+                this._emitError("expected pipeline")
+            }
+            if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+                this._advanceToNext(Lexer.TokenKind.ACTION_END)
+            }
+        }
+        this.pos++
+
+        return this._createTemplateNode(templateName, pipelineNode)
+    },
+
+    _parseBlock() {
+        this._advanceToNonWhitespace()
+        if (this.tokens[this.pos].kind !== Lexer.TokenKind.STRING) {
+            this._emitError("expected string")
+            this._advanceToNext(Lexer.TokenKind.ACTION_END)
+        }
+        const nodes = []
+        const templateName = this.tokens[this.pos].value
+        this._advanceToNonWhitespace()
+        let pipelineNode = undefined
+        if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+            pipelineNode = this._parsePipeline()
+            if (!pipelineNode) {
+                this._emitError("expected pipeline")
+            }
+            if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+                this._advanceToNext(Lexer.TokenKind.ACTION_END)
+            }
+        }
+        this.pos++
+
+        this._parseNodes(nodes)
+        if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD) {
+            if (this.tokens[this.pos].value === 'end') {
+                this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                if (this.tokens[this.pos].kind === Lexer.TokenKind.EOF) {
+                    this._emitError('not terminated block')
+                    return
+                }
+                if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
+                    this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                }
+                this.pos++
+            }
+        } else if (this.tokens[this.pos].kind === Lexer.TokenKind.EOF) {
+            this._emitError('not terminated block')
+            return
+        }
+
+        return this._createBlockNode(templateName, pipelineNode, nodes)
     },
 
     _parseRange() {
@@ -641,7 +784,7 @@ Parser.prototype = {
         }
         const pipelineNode = this._parsePipeline()
         if (!pipelineNode) {
-            return
+            this._emitError("expected pipeline")
         }
         const truthyNodes = []
         const falsyNodes = []
@@ -649,19 +792,26 @@ Parser.prototype = {
             this._advanceToNext(Lexer.TokenKind.ACTION_END)
         }
         this.pos++
-        this._parseNodes(truthyNodes, true)
+        this._parseNodes(truthyNodes)
         if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD) {
+            let endHandled = false
             if (this.tokens[this.pos].value === 'else') {
                 this._advanceToNonWhitespace()
                 if (this.tokens[this.pos].kind === Lexer.TokenKind.KEYWORD && this.tokens[this.pos].value === 'if') {
-                    elseNodes.push(this._parseIf())
+                    elseNodes.push(this._parseIf(true))
+                    endHandled = true
                 } else {
                     if (this.tokens[this.pos].kind !== Lexer.TokenKind.ACTION_END) {
                         this._advanceToNext(Lexer.TokenKind.ACTION_END)
                     }
                     this.pos++
-                    this._parseNodes(falsyNodes, true)
+                    this._parseNodes(falsyNodes)
                 }
+            }
+
+            if (!endHandled && this.tokens[this.pos].kind === Lexer.TokenKind.EOF) {
+                this._emitError('not terminated range')
+                return
             }
 
             if (this.tokens[this.pos].value === 'end') {
@@ -671,6 +821,9 @@ Parser.prototype = {
                 }
                 this.pos++
             }
+        } else if (this.tokens[this.pos].kind === Lexer.TokenKind.EOF) {
+            this._emitError('not terminated range')
+            return
         }
 
         if (var2Token) {
@@ -696,6 +849,10 @@ Parser.prototype = {
         if (varToken.value[0] !== Lexer.Chars.VARIABLE_PREFIX) {
             return { success: false }
         }
+        if (varToken.value[0].length <= Lexer.Chars.VARIABLE_PREFIX) {
+            // Just a '$'? It's a protected name
+            this._emitError("expected variable name")
+        }
         this._advanceToNonWhitespace()
         let declareNew = null
         if (this.tokens[this.pos].kind === Lexer.TokenKind.EQUAL) {
@@ -711,6 +868,10 @@ Parser.prototype = {
         }
         this._advanceToNonWhitespace()
         const pipelineNode = this._parsePipeline()
+        if (!pipelineNode) {
+            this._emitError("could not parse pipeline")
+            return { success: false, error: true }
+        }
         if (declareNew) {
             return {
                 success: true,
@@ -777,7 +938,14 @@ Parser.prototype = {
             case Lexer.TokenKind.WHITESPACE:
                 this.pos++
                 break
+            default:
+                this._emitError("unexpected token")
+                this.pos++
+                break
             }
+        }
+        if (args.length === 0 && pipeline.args.length === 0) {
+            return undefined
         }
         return pipeline.pushArgs(args)
     },
@@ -890,6 +1058,14 @@ Parser.prototype = {
         return new AssignNode(varToken, pipelineNode)
     },
 
+    _createTemplateNode(templateName, pipelineNode) {
+        return new TemplateNode(templateName, pipelineNode)
+    },
+
+    _createBlockNode(templateName, pipelineNode, nodes) {
+        return new BlockNode(templateName, pipelineNode, nodes)
+    },
+
     _advanceToNonWhitespace() {
         this.pos++
         for (;this.pos <= this.tokens.length && this.tokens[this.pos].kind === Lexer.TokenKind.WHITESPACE && this.tokens[this.pos].kind !== Lexer.TokenKind.EOF; this.pos++) {}
@@ -955,11 +1131,7 @@ IdentifierNode.prototype = {
      * @param {ScopeStack} stack 
      */
     evalStack(stack) {
-        const value = stack.getVariable(this.name)
-        if (value === undefined) {
-            throw new Error("undefined variable " + this.name)
-        }
-        return value
+        return stack.getVariable(this.name)
     },
 }
 
@@ -1061,7 +1233,7 @@ PipelineNode.prototype = {
     },
 
     executeS(stack) {
-        return this.eval(stack)
+        return this.eval(stack) ?? ''
     }
 }
 
@@ -1302,11 +1474,89 @@ ContinueNode.prototype = {
 }
 
 /**
+ * @param {string} templateName 
+ * @param {PipelineNode | undefined} pipelineNode 
+ */
+function TemplateNode(templateName, pipelineNode) {
+    this._blockNode = new BlockNode(templateName, pipelineNode, undefined)
+}
+TemplateNode.prototype = {
+    /**
+     * @param {ScopeStack} stack 
+     */
+    eval(stack) {
+        return this._blockNode.eval(stack)
+    },
+    /**
+     * @param {ScopeStack} stack 
+     */
+    executeS(stack) {
+        return this.eval(stack)
+    }
+}
+
+/**
  * 
+ * @param {string} templateName 
+ * @param {PipelineNode} pipelineNode 
  * @param {RootTemplateNode[]} nodes 
  */
-function Template(nodes) {
+function BlockNode(templateName, pipelineNode, nodes) {
+    this.templateName = templateName
+    this.pipelineNode = pipelineNode
     this.nodes = nodes
+}
+BlockNode.prototype = {
+    /**
+     * 
+     * @param {RootTemplateNode[]} nodeList 
+     * @param {ScopeStack} stack 
+     * @returns 
+     */
+    _evalNodes(nodeList, stack) {
+        let out = ''
+        for (let i = 0; i < nodeList.length; i++) {
+            out += nodeList[i].executeS(stack)
+            if (stack.getMark()) {
+                return out
+            }
+        }
+        return out
+    },
+    /**
+     * @param {ScopeStack} stack 
+     */
+    eval(stack) {
+        let value = null
+        if (this.pipelineNode) {
+            value = this.pipelineNode.eval(stack)
+        }
+        let nodeList = stack.getTemplateNodes(this.templateName)
+        if (!nodeList) {
+            nodeList = this.nodes
+        }
+        if (nodeList) {
+            stack.push(value)
+            const out = this._evalNodes(nodeList, stack)
+            stack.pop()
+            return out
+        }
+        return ''
+    },
+    /**
+     * @param {ScopeStack} stack 
+     */
+    executeS(stack) {
+        return this.eval(stack)
+    }
+}
+
+/**
+ * 
+ * @param {Record<string, RootTemplateNode[]>} templates 
+ */
+function Template(templates) {
+    this.templates = templates
     this.variablesContext = {}
     this._setupDefaultFuncs()
 }
@@ -1314,13 +1564,17 @@ function Template(nodes) {
 Template.MustParse = function(src) {
     const { tokens, errors } = Lexer.lex(src)
     if (errors.length > 0) {
-        throw new Error('Failed to tokenize template', { errors })
+        const err = new Error('Failed to tokenize template')
+        err.errors = errors
+        throw err
     }
     const parser = Parser.parse(src, tokens)
     if (parser.errors.length > 0) {
-        throw new Error('Failed to parse template', { errors: parser.errors })
+        const err = new Error('Failed to parse template')
+        err.errors = parser.errors
+        throw err
     }
-    return new Template(parser.nodes)
+    return new Template(parser.templates)
 }
 
 Template.isTrue = function(value) {
@@ -1390,34 +1644,43 @@ Template.prototype = {
     },
     executeS(contextData) {
         let out = ''
-        const stack = new ScopeStack(contextData, this.variablesContext)
-        for (let i = 0; i < this.nodes.length; i++) {
-            out += this.nodes[i].executeS(stack)
+        const stack = new ScopeStack(contextData, this.variablesContext, this.templates)
+        const nodes = stack.getTemplateNodes(Parser.ROOT_TEMPLATE)
+        for (let i = 0; i < nodes.length; i++) {
+            out += nodes[i].executeS(stack)
         }
         return out
     }
 }
 
-function ScopeStack(initialDot, initialVariables) {
-    this._stack = [this._newScope(initialDot, initialVariables)]
+function ScopeStack(initialDot, initialVariables, templates) {
+    this._stack = [this._newScope(initialDot, initialVariables, true)]
+    this._templates = templates
     this._mark = null
 }
 ScopeStack.prototype = {
-    _newScope(dot, variables) {
+    _newScope(dot, variables, newRoot) {
+        const vars = Object.assign({}, variables)
+        if (newRoot) {
+            vars['$'] = dot
+        }
         return {
             dot: dot,
-            variables: variables || {},
+            variables: vars,
         }
+    },
+
+    getTemplateNodes(templateName) {
+        return this._templates[templateName]
     },
 
     getVariable(name) {
         for (let i = this._stack.length - 1; i >= 0; i--) {
-            const val = this._stack[i].variables[name]
-            if (val !== undefined) {
-                return val
+            if (name in this._stack[i].variables) {
+                return this._stack[i].variables[name]
             }
         }
-        return undefined
+        throw new Error("undefined variable " + name)
     },
 
     getDot() {
@@ -1470,8 +1733,8 @@ ScopeStack.prototype = {
         this._mark = null
     },
 
-    push(dotValue) {
-        this._stack.push(this._newScope(dotValue))
+    push(dotValue, newRoot = false) {
+        this._stack.push(this._newScope(dotValue, newRoot))
     },
 
     pop() {
