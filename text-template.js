@@ -1,5 +1,5 @@
 /**
- * @typedef {{stringKind: Lexer.TokenKind[keyof Lexer.TokenKind], value: string, pos: number, line: number, col: number, kind: number}} Token
+ * @typedef {{stringKind: Lexer.TokenKind[keyof Lexer.TokenKind], value: string, pos: number, line: number, col: number, endPos: number, endLine: number, endCol: number, kind: number}} Token
  **/
 
 /**
@@ -97,7 +97,7 @@ Lexer.prototype = {
             this._handleData(trimNext)
         }
 
-        this.tokens.push(this._createToken(Lexer.TokenKind.EOF, "", this.pos, this.line, this.col))
+        this.tokens.push(this._createToken(Lexer.TokenKind.EOF, "", this.pos, this.line, this.col, this.pos, this.line, this.col))
     },
 
     _isStartingAction() {
@@ -143,13 +143,12 @@ Lexer.prototype = {
         }
 
         if (buffer.length > 0) {
-            this.tokens.push(this._createToken(Lexer.TokenKind.DATA, buffer, startPos, startLine, startCol))
+            this.tokens.push(this._createToken(Lexer.TokenKind.DATA, buffer, startPos, startLine, startCol, this.pos, this.line, this.col))
         }
     },
 
     _handleAction() {
-        this.tokens.push(this._createToken(Lexer.TokenKind.ACTION_START, '', this.pos, this.line, this.col))
-        this._advanceN(Lexer.Chars.ACTION_DELIMITER_START.length)
+        this._handleSimple(Lexer.Chars.ACTION_DELIMITER_START, Lexer.TokenKind.ACTION_START)
         if (this.src[this.pos] === Lexer.Chars.ACTION_DELIMITER_TRIM) {
             this._advance()
         }
@@ -163,9 +162,9 @@ Lexer.prototype = {
             if (actionEnding.isEndingAction) {
                 if (actionEnding.hasTrimChar) {
                     trimNextDataBlock = true
+                    this._advance()
                 }
-                this.tokens.push(this._createToken(Lexer.TokenKind.ACTION_END, '', this.pos, this.line, this.col))
-                this._advanceN(Lexer.Chars.ACTION_DELIMITER_END.length + +actionEnding.hasTrimChar)
+                this._handleSimple(Lexer.Chars.ACTION_DELIMITER_END, Lexer.TokenKind.ACTION_END)
                 eof = false
                 break
             }
@@ -202,7 +201,9 @@ Lexer.prototype = {
             }
 
             this._emitError("unexpected character " + this.src[this.pos])
-            return
+            if (!this._advanceUntil(Lexer.Chars.ACTION_DELIMITER_END)) {
+                return
+            }
         }
 
         if (eof) {
@@ -231,7 +232,7 @@ Lexer.prototype = {
             const startCol = this.col
             const startPos = this.pos
             this._advanceN(seq.length)
-            this.tokens.push(this._createToken(tokenKind, seq, startPos, startLine, startCol))
+            this.tokens.push(this._createToken(tokenKind, seq, startPos, startLine, startCol, this.pos, this.line, this.col))
             return true
         }
         return false
@@ -245,7 +246,7 @@ Lexer.prototype = {
         this._advance()
         for (;this.pos < this.src.length && this._isWhitespace(this.src[this.pos]); buffer += this.src[this.pos], this._advance()) {}
 
-        this.tokens.push(this._createToken(Lexer.TokenKind.WHITESPACE, buffer, startPos, startLine, startCol))
+        this.tokens.push(this._createToken(Lexer.TokenKind.WHITESPACE, buffer, startPos, startLine, startCol, this.pos, this.line, this.col))
     },
 
     _peekString() {
@@ -286,7 +287,7 @@ Lexer.prototype = {
                     if (c) {
                         this._advance()
                     }
-                    this.tokens.push(this._createToken(Lexer.TokenKind.STRING, buffer, startPos, startLine, startCol))
+                    this.tokens.push(this._createToken(Lexer.TokenKind.STRING, buffer, startPos, startLine, startCol, this.pos, this.line, this.col))
                 default:
                     this._emitError('unknown escape sequence \\'+c)
                 }
@@ -297,19 +298,19 @@ Lexer.prototype = {
             if (c === '\n') {
                 this._emitError('unfinished string')
                 this._advance()
-                this.tokens.push(this._createToken(Lexer.TokenKind.STRING, buffer, startPos, startLine, startCol))
+                this.tokens.push(this._createToken(Lexer.TokenKind.STRING, buffer, startPos, startLine, startCol, this.pos, this.line, this.col))
                 return
             }
             if (this._peekSeq(Lexer.Chars.STRING_DELIM)) {
                 this._advance()
-                this.tokens.push(this._createToken(Lexer.TokenKind.STRING, buffer, startPos, startLine, startCol))
+                this.tokens.push(this._createToken(Lexer.TokenKind.STRING, buffer, startPos, startLine, startCol, this.pos, this.line, this.col))
                 return
             }
             buffer += c
             this._advance()
         }
         this._emitError('unfinished string')
-        this.tokens.push(this._createToken(Lexer.TokenKind.STRING, buffer, startPos, startLine, startCol))
+        this.tokens.push(this._createToken(Lexer.TokenKind.STRING, buffer, startPos, startLine, startCol, this.pos, this.line, this.col))
     },
 
     _handleComment() {
@@ -321,7 +322,7 @@ Lexer.prototype = {
         for (;this.pos < this.src.length;) {
             if (this._peekSeq(Lexer.Chars.COMMENT_END)) {
                 this._advanceN(Lexer.Chars.COMMENT_END.length)
-                this.tokens.push(this._createToken(Lexer.TokenKind.COMMENT, this.src.slice(startPos, this.pos), startPos, startLine, startCol))
+                this.tokens.push(this._createToken(Lexer.TokenKind.COMMENT, this.src.slice(startPos, this.pos), startPos, startLine, startCol, this.pos, this.line, this.col))
                 return
             }
             buffer += this.src[this.pos]
@@ -356,12 +357,13 @@ Lexer.prototype = {
         }
 
         if (identifier.length > 0) {
-            this.tokens.push(this._createToken(depth === 0 && Lexer.ReservedKeywords.has(identifier) ? Lexer.TokenKind.KEYWORD : Lexer.TokenKind.IDENTIFIER, identifier, startPos, startLine, startCol))
+            this.tokens.push(this._createToken(depth === 0 && Lexer.ReservedKeywords.has(identifier) ? Lexer.TokenKind.KEYWORD : Lexer.TokenKind.IDENTIFIER, identifier, startPos, startLine, startCol, this.pos, this.line, this.col))
         }
     },
 
     _peekNumber() {
-        const currentChar = this.src[this.pos]
+        const startWithDash = this.src[this.pos] === '-'
+        const currentChar = this.src[this.pos + +startWithDash]
         return currentChar >= '0' && currentChar <= '9'
     },
 
@@ -372,14 +374,18 @@ Lexer.prototype = {
         let number = ''
         for (;this.pos < this.src.length;) {
             const currentChar = this.src[this.pos]
-            if (currentChar >= '0' && currentChar <= '9' || (currentChar === '.' && number.indexOf('.') === -1)) {
+            if ((number.length === 0 && currentChar === '-') || (currentChar >= '0' && currentChar <= '9') || (currentChar === '.' && number.indexOf('.') === -1)) {
                 number += currentChar
                 this._advance()
             } else {
                 break
             }
         }
-        this.tokens.push(this._createToken(Lexer.TokenKind.NUMBER, number, startPos, startLine, startCol))
+        const nextChar = this.src[this.pos]
+        if (!this._isWhitespace(nextChar) && !this._peekSeq(')') && !this._peekSeq(Lexer.Chars.PIPE) && !this._peekSeq(Lexer.Chars.ACTION_DELIMITER_END) && !this._peekSeq(Lexer.Chars.ACTION_DELIMITER_TRIM+Lexer.Chars.ACTION_DELIMITER_END)) {
+            this._emitError('unexpected char after number ' + nextChar)
+        }
+        this.tokens.push(this._createToken(Lexer.TokenKind.NUMBER, number, startPos, startLine, startCol, this.pos, this.line, this.col))
     },
 
     _advance() {
@@ -401,6 +407,16 @@ Lexer.prototype = {
         }
     },
 
+    _advanceUntil(seq) {
+        for (;this.pos < this.src.length;) {
+            if (this._peekSeq(seq)) {
+                return true
+            }
+            this._advance()
+        }
+        return false
+    },
+
     /**
      * 
      * @param {Symbol} kind 
@@ -408,11 +424,14 @@ Lexer.prototype = {
      * @param {number} pos 
      * @param {number} line 
      * @param {number} col 
+     * @param {number} endPos 
+     * @param {number} endLine 
+     * @param {number} endCol 
      * @returns {Token}
      */
-    _createToken(kind, value, pos, line, col) {
+    _createToken(kind, value, pos, line, col, endPos, endLine, endCol) {
         return {
-            stringKind: kind.description, value, pos, line, col, kind,
+            stringKind: kind.description, value, pos, line, col, kind, endPos, endLine, endCol,
         }
     },
 
@@ -545,6 +564,10 @@ Parser.prototype = {
                 if (!result.success && !result.error) {
                     this.pos = currentPos
                     return this._parsePipeline()
+                }
+                if (result.error) {
+                    // Cannot safely parse the action, skip to the end
+                    this._advanceToNext(Lexer.TokenKind.ACTION_END)
                 }
 
                 return result.node
@@ -949,7 +972,8 @@ Parser.prototype = {
             case Lexer.TokenKind.ACTION_END:
                 break parsingLoop
             case Lexer.TokenKind.KEYWORD:
-                break parsingLoop
+                this._emitError("unexpected keyword")
+                return
             case Lexer.TokenKind.ACTION_START:
                 this._emitError("unexpected action start")
                 return
@@ -1103,11 +1127,15 @@ Parser.prototype = {
             token: this.tokens[i]
         }
     },
-    
-    _emitError(err) {
+
+    /**
+     * @param {string} err 
+     * @param {Token} [token] 
+     */
+    _emitError(err, token) {
         this.errors.push({
             message: err,
-            token: this.tokens[this.pos]
+            token: token ?? this.tokens[this.pos]
         })
     }
 }

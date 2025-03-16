@@ -60,6 +60,7 @@
             border-radius: 8px;
             min-height: 6rem;
             flex: 1 1 0%;
+            position: relative;
         }
         .result {
             width: 100%;
@@ -103,7 +104,15 @@
                 }
             }
         }
+
+        .editor {
+            position: absolute;
+            width: calc(100% - 16px);
+            height: calc(100% - 16px);
+        }
     </style>
+    <link href="https://cdn.jsdelivr.net/npm/vscode-codicons@0.0.17/dist/codicon.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/requirejs@2.3.7/require.min.js"></script>
 </head>
 <body>
     <div class="content">
@@ -116,13 +125,15 @@
         <div class="cols">
             <div class="col">
                 <label class="label" for="template">Template:</label>
-                <textarea class="input" id="template"></textarea>
-                <div class="error" id="template-error"></div>
+                <div class="input">
+                    <div class="editor" id="template"></div>
+                </div>
             </div>
             <div class="col">
                 <label class="label" for="data">Data: (JSON)</label>
-                <textarea class="input" id="data"></textarea>
-                <div class="error" id="data-error"></div>
+                <div class="input">
+                    <div class="editor" id="data"></div>
+                </div>
             </div>
             <div class="col">
                 <div class="label">Output:</div>
@@ -135,25 +146,47 @@
     </div>
 
     <script>
+        require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs' } });
         /** @type {HTMLTextAreaElement} */
         const templateEl = document.getElementById('template')
-        const templateErrEl = document.getElementById('template-error')
         /** @type {HTMLTextAreaElement} */
         const dataEl = document.getElementById('data')
-        const dataErrEl = document.getElementById('data-error')
         const outputEl = document.getElementById('output')
         const outputErrEl = document.getElementById('run-error')
 
-        let templateSrc = ''
+        /** @type {HTMLSelectElement} */
+        const examplesSelect = document.getElementById('examples')
+        const examplesMap = {}
+
         let template = null
         let currentData = {}
 
-        dataEl.value = JSON.stringify(dataEl)
+        let dataModel = null
+        let templateModel = null
 
-        templateEl.addEventListener('input', () => onTemplateInput())
-        dataEl.addEventListener('input', () => onDataInput())
+        require(['vs/editor/editor.main'], function () {
+            const dataEditor = monaco.editor.create(dataEl, {
+                language: 'json',
+                theme: 'vs-dark',
+                automaticLayout: true,
+            })
+            dataModel = dataEditor.getModel()
+            const templateEditor = monaco.editor.create(templateEl, {
+                language: 'goql',
+                theme: 'vs-dark',
+                automaticLayout: true,
+            })
+            templateModel = templateEditor.getModel()
+            templateModel.onDidChangeContent(() => {
+                tryParseTemplate() && executeTemplate()
+            })
+            dataModel.onDidChangeContent(() => {
+                tryParseData() && executeTemplate()
+            })
 
-        tryParseTemplate() && tryParseData() && executeTemplate()
+            registerExamples()
+            selectExample(examplesMap[examplesSelect.value])
+        })
 
         const additionalPlaygroundFunctions = {
             "upper": str => {
@@ -188,17 +221,28 @@
             tryParseTemplate() && executeTemplate()
         }
         function tryParseTemplate() {
+            const markers = []
             try {
-                const tmplSrc = templateEl.value
+                const tmplSrc = templateModel.getValue()
                 const tmpl = Template.MustParse(tmplSrc).withFuncs(additionalPlaygroundFunctions)
-                templateSrc = tmplSrc
                 template = tmpl
-                templateErrEl.style.display = ''
             } catch (err) {
-                templateErrEl.innerText = err.message + (err.errors?.length ? '\n' + err.errors.map(e => '- ' + e.message).join('\n') : '')
-                templateErrEl.style.display = 'block'
+                if (err.errors?.length) {
+                    for (const error of err.errors) {
+                        markers.push({
+                            severity: monaco.MarkerSeverity.Error,
+                            message: error.message,
+                            startLineNumber: (error.token?.line ?? error.line) + 1,
+                            startColumn: (error.token?.col ?? error.col) + 1,
+                            endLineNumber: (error.token?.endLine ?? error.line) + 1,
+                            endColumn: (error.token?.endCol ?? error.col + 1) + 1,
+                        })
+                    }
+                }
+                monaco.editor.setModelMarkers(templateModel, "owner", markers)
                 return false
             }
+            monaco.editor.setModelMarkers(templateModel, "owner", markers)
             return true
         }
         function onDataInput() {
@@ -206,11 +250,8 @@
         }
         function tryParseData() {
             try {
-                currentData = JSON.parse(dataEl.value)
-                dataErrEl.style.display = ''
+                currentData = JSON.parse(dataModel.getValue())
             } catch (err) {
-                dataErrEl.innerText = err.message
-                dataErrEl.style.display = 'block'
                 return false
             }
             return true
@@ -229,12 +270,8 @@
                 outputErrEl.style.display = 'block'
             }
         }
-    </script>
 
-    <script>
-        /** @type {HTMLSelectElement} */
-        const examplesSelect = document.getElementById('examples')
-        const examplesMap = {}
+        // #region Examples
         examplesSelect.addEventListener('change', () => {
             const selected = examplesSelect.value
             selectExample(examplesMap[selected])
@@ -244,13 +281,10 @@
             if (!example) {
                 return
             }
-            templateEl.value = example.template
-            dataEl.value = example.data
+            templateModel.setValue(example.template)
+            dataModel.setValue(example.data)
             tryParseTemplate() && tryParseData() && executeTemplate()
         }
-
-        registerExamples()
-        selectExample(examplesMap[examplesSelect.value])
 
         function registerExample(name, template, data) {
             examplesMap[name] = { name, template, data }
@@ -271,6 +305,7 @@
                 registerExample(example.name, example.template, example.data)
             }
         }
+        // #endregion Examples
     </script>
 </body>
 </html>
