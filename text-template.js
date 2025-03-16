@@ -1418,8 +1418,8 @@ RangeNode.prototype = {
      * @param {ScopeStack} stack 
      */
     executeS(stack) {
-        const array = this.pipelineNode.eval(stack)
-        if (!Template.isTrue(array)) {
+        const obj = this.pipelineNode.eval(stack)
+        if (!Template.isTrue(obj)) {
             let out = ''
             for (let i = 0; i < this.falsyNodes.length; i++) {
                 out += this.falsyNodes[i].executeS(stack)
@@ -1427,13 +1427,25 @@ RangeNode.prototype = {
             return out
         }
         let out = ''
-        range: for (let i = 0; i < array.length; i++) {
-            const element = array[i]
+        let keys = undefined
+        let isLoopRunning = i => i < obj.length
+        let getObjItem = i => obj[i]
+        let getObjKey = i => i
+        if (!Array.isArray(obj) && typeof obj !== 'string') {
+            keys = Object.keys(obj)
+            keys.sort()
+            isLoopRunning = i => i < keys.length
+            getObjItem = i => obj[keys[i]]
+            getObjKey = i => keys[i]
+        }
+        range: for (let i = 0; isLoopRunning(i); i++) {
+            const element = getObjItem(i)
+            const key = getObjKey(i)
             stack.push(element)
             if (this.elementToken !== undefined) {
                 stack.defineVariable(this.elementToken.value, element)
                 if (this.indexToken !== undefined) {
-                    stack.defineVariable(this.indexToken.value, i)
+                    stack.defineVariable(this.indexToken.value, key)
                 }
             }
 
