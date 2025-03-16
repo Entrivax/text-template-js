@@ -165,15 +165,18 @@
         let templateModel = null
 
         require(['vs/editor/editor.main'], function () {
+            monaco.languages.register({ id: 'gotmpl' })
+            monaco.languages.setMonarchTokensProvider('gotmpl', gotmplLanguageTokens());
+            monaco.editor.defineTheme('pg', monacoTheme())
             const dataEditor = monaco.editor.create(dataEl, {
                 language: 'json',
-                theme: 'vs-dark',
+                theme: 'pg',
                 automaticLayout: true,
             })
             dataModel = dataEditor.getModel()
             const templateEditor = monaco.editor.create(templateEl, {
-                language: 'goql',
-                theme: 'vs-dark',
+                language: 'gotmpl',
+                theme: 'pg',
                 automaticLayout: true,
             })
             templateModel = templateEditor.getModel()
@@ -306,6 +309,152 @@
             }
         }
         // #endregion Examples
+
+        function monacoTheme() {
+            return {
+                "base": "vs-dark",
+                "inherit": true,
+                "rules": [
+                    {
+                        "background": "1d1614",
+                        "foreground": "f0ddd8",
+                        "token": ""
+                    },
+                    {
+                        "foreground": "0066ff",
+                        "fontStyle": "italic",
+                        "token": "comment"
+                    },
+                    {
+                        "foreground": "43a8ed",
+                        "fontStyle": "bold",
+                        "token": "keyword"
+                    },
+                    {
+                        "foreground": "ffa700",
+                        "token": "number"
+                    },
+                    {
+                        "foreground": "87806f",
+                        "token": "delimiter"
+                    },
+                    {
+                        "foreground": "918f89",
+                        "token": "delimiter.action"
+                    },
+                    {
+                        "foreground": "31a0d7",
+                        "token": "delimiter.pipe"
+                    },
+                    {
+                        "foreground": "e1c803",
+                        "token": "identifier.root"
+                    },
+                    {
+                        "foreground": "29ada8",
+                        "token": "identifier.variable"
+                    },
+                    {
+                        "foreground": "7ecd2a",
+                        "token": "string"
+                    },
+                    {
+                        "foreground": "2fe420",
+                        "token": "string.escape"
+                    },
+                ],
+                "colors": {
+                    "editor.foreground": "#BDAE9D",
+                    "editor.background": "#1d1614",
+                    "editor.selectionBackground": "#C3DCFF",
+                    "editor.lineHighlightBackground": "#3A312C",
+                    "editorCursor.foreground": "#889AFF",
+                    "editorWhitespace.foreground": "#BFBFBF"
+                }
+            }
+        }
+
+        function gotmplLanguageTokens() {
+            return {
+                defaultToken: 'invalid',
+                keywords: [
+                    'if',  'else',
+                    'range', 'break', 'continue',
+                    'template', 'block', 'define',
+                    'with',
+                    'end',
+                ],
+
+                operators: [':=', '='],
+                symbols: /[=:|]/,
+
+                digits: /\d+/,
+
+                escapes: /\\[ntr\\"]/,
+
+                brackets: [['(', ')', 'delimiter.parenthesis']],
+
+                tokenizer: {
+                    root: [
+                        [/{{-?/, { token: "delimiter.action", bracket: "@open", next: "@action" }],
+                        // Raw data
+                        [/.*?(?={{|$)/, { token: "default" }],
+                    ],
+
+                    action: [
+                        [/-?}}/, { token: "delimiter.action", bracket: "@close", next: "@pop" }],
+                        [/[()]/, 'delimiter.parenthesis'],
+                        { include: '@whitespace' },
+                        { include: '@number' },
+
+                        [/\|/, 'delimiter.pipe'],
+
+                        // identifiers and keywords
+                        [/\$[a-zA-Z_$][\w]*/, 'identifier.variable'],
+                        [/\$/, 'identifier.root'],
+                        [/[a-zA-Z_$][\w]*/, {
+                            cases: {
+                                '@keywords': 'keyword',
+                                '@default': 'identifier'
+                            }
+                        }],
+
+                        // delimiters and symbols
+                        [/@symbols/, {
+                            cases: {
+                                '@operators': 'delimiter',
+                                '@default': ''
+                            }
+                        }],
+                        [/[.]/, 'delimiter'],
+
+                        // strings
+                        [/"/, 'string', '@string_double'],
+                    ],
+
+                    number: [
+                        [/(@digits)\.(@digits)?/, 'number.float'],
+                        [/(@digits)/, 'number'],
+                    ],
+                    whitespace: [
+                        [/[ \t\r\n]+/, 'white'],
+                        [/\/\*/, 'comment', '@comment' ],
+                    ],
+                    comment: [
+                        [/[^\/*]+/, 'comment'],
+                        [/\*\//, 'comment', '@pop'],
+                        [/[\/*]/, 'comment'],
+                    ],
+
+                    string_double: [
+                        [/[^\\"]+/, 'string'],
+                        [/@escapes/, 'string.escape'],
+                        [/\\./, 'string.escape.invalid'],
+                        [/"/, 'string', '@pop']
+                    ],
+                }
+            }
+        }
     </script>
 </body>
 </html>
