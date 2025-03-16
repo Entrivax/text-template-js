@@ -28,9 +28,7 @@ Lexer.TokenKind = {
     KEYWORD: Symbol("KEYWORD"),
     PAREN_OPEN: Symbol("PAREN_OPEN"),
     PAREN_CLOSE: Symbol("PAREN_CLOSE"),
-    COMMENT_START: Symbol("COMMENT_START"),
-    COMMENT_END: Symbol("COMMENT_END"),
-    COMMENT_CONTENT: Symbol("COMMENT_CONTENT"),
+    COMMENT: Symbol("COMMENT"),
     WHITESPACE: Symbol("WHITESPACE"),
     DOT: Symbol("DOT"),
     DECLARE: Symbol("DECLARE"),
@@ -65,7 +63,8 @@ Lexer.Chars = {
     COMMENT_END: "*/",
     DECLARE: ":=",
     EQUAL: "=",
-    COMMA: ","
+    COMMA: ",",
+    NIL: "nil",
 }
 
 Lexer.ReservedKeywords = new Set([
@@ -179,7 +178,7 @@ Lexer.prototype = {
                 this._handleComment()
                 continue
             }
-            if (this._peekSeq(Lexer.Chars.STRING_DELIM)) {
+            if (this._peekString()) {
                 this._handleString()
                 continue
             }
@@ -189,7 +188,8 @@ Lexer.prototype = {
                 this._handleSimple(Lexer.Chars.DECLARE, Lexer.TokenKind.DECLARE) ||
                 this._handleSimple(Lexer.Chars.EQUAL, Lexer.TokenKind.EQUAL) ||
                 this._handleSimple(Lexer.Chars.DOT, Lexer.TokenKind.DOT) ||
-                this._handleSimple(Lexer.Chars.PIPE, Lexer.TokenKind.PIPE)) {
+                this._handleSimple(Lexer.Chars.PIPE, Lexer.TokenKind.PIPE) ||
+                this._handleSimple(Lexer.Chars.NIL, Lexer.TokenKind.NIL)) {
                 continue
             }
             if (this._peekNumber()) {
@@ -248,6 +248,9 @@ Lexer.prototype = {
         this.tokens.push(this._createToken(Lexer.TokenKind.WHITESPACE, buffer, startPos, startLine, startCol))
     },
 
+    _peekString() {
+        return this._peekSeq(Lexer.Chars.STRING_DELIM)
+    },
     _handleString() {
         const startLine = this.line
         const startCol = this.col
@@ -307,7 +310,6 @@ Lexer.prototype = {
     },
 
     _handleComment() {
-        this.tokens.push(this._createToken(Lexer.TokenKind.COMMENT_START, Lexer.Chars.COMMENT_START, this.pos, this.line, this.col))
         this._advanceN(Lexer.Chars.COMMENT_START.length)
         const startLine = this.line
         const startCol = this.col
@@ -315,16 +317,15 @@ Lexer.prototype = {
         let buffer = ''
         for (;this.pos < this.src.length;) {
             if (this._peekSeq(Lexer.Chars.COMMENT_END)) {
-                this.tokens.push(this._createToken(Lexer.TokenKind.COMMENT_CONTENT, buffer, startPos, startLine, startCol))
                 this._advanceN(Lexer.Chars.COMMENT_END.length)
-                this.tokens.push(this._createToken(Lexer.TokenKind.COMMENT_END, Lexer.Chars.COMMENT_END, this.pos, this.line, this.col))
+                this.tokens.push(this._createToken(Lexer.TokenKind.COMMENT, this.src.slice(startPos, this.pos), startPos, startLine, startCol))
                 return
             }
             buffer += this.src[this.pos]
             this._advance()
         }
         // Uh oh, template ended before the comment was closed
-        this.tokens.push(this._createToken(Lexer.TokenKind.COMMENT_CONTENT, buffer, startPos, startLine, startCol))
+        this._emitError("not closed comment")
     },
 
     _peekIdentifierOrKeyword() {
@@ -498,6 +499,13 @@ Parser.prototype = {
                 this._emitError("unexpected EOF")
                 return
             case Lexer.TokenKind.KEYWORD:
+                const nextToken = this.tokens[this.pos + 1]
+                if (!this._expectTokenKind(nextToken, Lexer.TokenKind.ACTION_END, Lexer.TokenKind.WHITESPACE)) {
+                    this._emitError("unexpected token after keyword")
+                    // Cannot safely parse the action, skip to the end
+                    this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                    return
+                }
                 switch (token.value) {
                 case 'if':
                     return this._parseIf()
@@ -537,8 +545,18 @@ Parser.prototype = {
                 }
 
                 return result.node
-            default:
+            case Lexer.TokenKind.BOOL:
+            case Lexer.TokenKind.DOT:
+            case Lexer.TokenKind.NIL:
+            case Lexer.TokenKind.NUMBER:
+            case Lexer.TokenKind.PAREN_OPEN:
+            case Lexer.TokenKind.STRING:
                 return this._parsePipeline()
+            default:
+                this._emitError("unexpected token")
+                // Cannot safely parse the action, skip to the end
+                this._advanceToNext(Lexer.TokenKind.ACTION_END)
+                return
             }
         }
     },
@@ -927,16 +945,14 @@ Parser.prototype = {
                 break
             case Lexer.TokenKind.ACTION_END:
                 break parsingLoop
-            case Lexer.TokenKind.COMMENT_START:
-                this._parseComment()
-                break
             case Lexer.TokenKind.KEYWORD:
                 break parsingLoop
             case Lexer.TokenKind.ACTION_START:
                 this._emitError("unexpected action start")
                 return
             case Lexer.TokenKind.WHITESPACE:
-                this.pos++
+            case Lexer.TokenKind.COMMENT:
+                this._advanceToNonWhitespace()
                 break
             default:
                 this._emitError("unexpected token")
@@ -951,7 +967,8 @@ Parser.prototype = {
     },
 
     _parsePipelinePath() {
-        const pathNodes = [this.tokens[this.pos].kind === Lexer.TokenKind.IDENTIFIER ? this._createIdentifierNode(this.tokens[this.pos].value) : this._createContextNode()]
+        const firstIsDot = this.tokens[this.pos].kind === Lexer.TokenKind.DOT
+        const pathNodes = [!firstIsDot ? this._createIdentifierNode(this.tokens[this.pos].value) : this._createContextNode()]
         let lastIsDot = this.tokens[this.pos].kind === Lexer.TokenKind.DOT
         this.pos++
         parsingLoop: for (;this.pos <= this.tokens.length && this.tokens[this.pos].kind !== Lexer.TokenKind.EOF;) {
@@ -978,29 +995,10 @@ Parser.prototype = {
             }
             this.pos++
         }
-        if (pathNodes.length > 1 && lastIsDot) {
+        if ((pathNodes.length > 1 || !firstIsDot) && lastIsDot) {
             this._emitError("unexpected dot at the end of path")
         }
         return pathNodes
-    },
-
-    _parseComment() {
-        for (;this.pos <= this.tokens.length && this.tokens[this.pos].kind !== Lexer.TokenKind.EOF;) {
-            const token = this.tokens[this.pos]
-            switch (token.kind) {
-            case Lexer.TokenKind.COMMENT_START:
-            case Lexer.TokenKind.COMMENT_CONTENT:
-                this.pos++
-                break
-            case Lexer.TokenKind.COMMENT_END:
-                this.pos++
-                return
-            default:
-                this._emitError("unexpected token " + token.stringKind)
-                break
-            }
-        }
-        this._emitError("comment node not ended")
     },
 
     _createPipelineNode() {
@@ -1068,7 +1066,7 @@ Parser.prototype = {
 
     _advanceToNonWhitespace() {
         this.pos++
-        for (;this.pos <= this.tokens.length && this.tokens[this.pos].kind === Lexer.TokenKind.WHITESPACE && this.tokens[this.pos].kind !== Lexer.TokenKind.EOF; this.pos++) {}
+        for (;this.pos <= this.tokens.length && (this.tokens[this.pos].kind === Lexer.TokenKind.WHITESPACE || this.tokens[this.pos].kind === Lexer.TokenKind.COMMENT); this.pos++) {}
     },
 
     _advanceToNext(tokenKind) {
@@ -1076,10 +1074,25 @@ Parser.prototype = {
         for (;this.pos <= this.tokens.length && this.tokens[this.pos].kind !== tokenKind && this.tokens[this.pos].kind !== Lexer.TokenKind.EOF; this.pos++) {}
     },
 
+    /**
+     * 
+     * @param {Token} token 
+     * @param  {...Lexer.TokenKind[keyof Lexer.TokenKind]} expectedTokenKinds 
+     */
+    _expectTokenKind(token, ...expectedTokenKinds) {
+        const tokenKind = token?.kind ?? Lexer.TokenKind.EOF
+        for (let i = 0; i < expectedTokenKinds.length; i++) {
+            if (tokenKind === expectedTokenKinds[i]) {
+                return true
+            }
+        }
+        return false
+    },
+
     _peekToNonWhitespace() {
         let i = this.pos + 1
-        for (;i <= this.tokens.length && this.tokens[i].kind === Lexer.TokenKind.WHITESPACE && this.tokens[i].kind !== Lexer.TokenKind.EOF; i++) {}
-        if (i >= this.tokens.length || this.tokens[i].kind === Lexer.TokenKind.WHITESPACE || this.tokens[i].kind === Lexer.TokenKind.EOF) {
+        for (;i <= this.tokens.length && (this.tokens[i].kind === Lexer.TokenKind.WHITESPACE || this.tokens[this.pos].kind === Lexer.TokenKind.COMMENT); i++) {}
+        if (i >= this.tokens.length || this.tokens[i].kind === Lexer.TokenKind.WHITESPACE || this.tokens[this.pos].kind === Lexer.TokenKind.COMMENT || this.tokens[i].kind === Lexer.TokenKind.EOF) {
             return null
         }
         return {
