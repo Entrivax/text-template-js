@@ -18,18 +18,39 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
 
+        .content {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            height: 100%;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.2rem;
+        }
+
         .cols {
-            padding: 16px;
+            padding: 0px 16px 16px 16px;
             gap: 16px;
             height: 100%;
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
         }
 
+        select {
+            background: rgb(29, 22, 20);
+            padding: 8px;
+            border-radius: 8px;
+            border: solid 0px transparent;
+            color: inherit;
+        }
+
         .input, .result-wrapper {
             width: 100%;
             height: 100%;
             font-family: 'Courier New', Courier, monospace;
+            font-size: 0.875rem;
             resize: none;
             border: solid 0px transparent;
             margin: 0;
@@ -45,6 +66,7 @@
             height: 100%;
             font-family: 'Courier New', Courier, monospace;
             overflow: auto;
+            white-space: pre;
         }
 
         .col {
@@ -64,26 +86,51 @@
             color: rgb(221, 50, 20);
             white-space: pre-wrap;
         }
+
+        .top-bar {
+            padding: 16px 16px 0px 16px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: space-between;
+
+            .right-side {
+                display: flex;
+                gap: 8px;
+
+                #examples {
+                    max-width: 200px;
+                }
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="cols">
-        <div class="col">
-            <label class="label" for="template">Template:</label>
-            <textarea class="input" id="template"></textarea>
-            <div class="error" id="template-error"></div>
-        </div>
-        <div class="col">
-            <label class="label" for="data">Data: (JSON)</label>
-            <textarea class="input" id="data"></textarea>
-            <div class="error" id="data-error"></div>
-        </div>
-        <div class="col">
-            <div class="label">Output:</div>
-            <div class="result-wrapper">
-                <div class="result" id="output"></div>
+    <div class="content">
+        <div class="top-bar">
+            <h1>Template playground</h1>
+            <div class="right-side">
+                <select id="examples"></select>
             </div>
-            <div class="error" id="run-error"></div>
+        </div>
+        <div class="cols">
+            <div class="col">
+                <label class="label" for="template">Template:</label>
+                <textarea class="input" id="template"></textarea>
+                <div class="error" id="template-error"></div>
+            </div>
+            <div class="col">
+                <label class="label" for="data">Data: (JSON)</label>
+                <textarea class="input" id="data"></textarea>
+                <div class="error" id="data-error"></div>
+            </div>
+            <div class="col">
+                <div class="label">Output:</div>
+                <div class="result-wrapper">
+                    <div class="result" id="output"></div>
+                </div>
+                <div class="error" id="run-error"></div>
+            </div>
         </div>
     </div>
 
@@ -108,13 +155,42 @@
 
         tryParseTemplate() && tryParseData() && executeTemplate()
 
+        const additionalPlaygroundFunctions = {
+            "upper": str => {
+                if (typeof str !== 'string') {
+                    str = Template.stringOf(str)
+                }
+                return str.toUpperCase()
+            },
+            "lower": str => {
+                if (typeof str !== 'string') {
+                    str = Template.stringOf(str)
+                }
+                return str.toLowerCase()
+            },
+            "formatNumber": n => {
+                if (typeof n !== 'number') {
+                    throw new Error('cannot format ' + n)
+                }
+                if (isNaN(n)) {
+                    return 'NaN'
+                }
+                const p = Math.floor(Math.log10(Math.abs(n)) / 3)
+                const prefixes = ['K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y', 'R', 'Q']
+                const pIndex = Math.min(p, prefixes.length - 1)
+                const textP = prefixes[pIndex] ?? ''
+                const d = Math.pow(10, pIndex*3)
+                return `${(n/d).toPrecision(4)}${textP}`
+            }
+        }
+
         function onTemplateInput() {
             tryParseTemplate() && executeTemplate()
         }
         function tryParseTemplate() {
             try {
                 const tmplSrc = templateEl.value
-                const tmpl = Template.MustParse(tmplSrc)
+                const tmpl = Template.MustParse(tmplSrc).withFuncs(additionalPlaygroundFunctions)
                 templateSrc = tmplSrc
                 template = tmpl
                 templateErrEl.style.display = ''
@@ -151,6 +227,48 @@
                 outputEl.innerText = ''
                 outputErrEl.innerText = err.message
                 outputErrEl.style.display = 'block'
+            }
+        }
+    </script>
+
+    <script>
+        /** @type {HTMLSelectElement} */
+        const examplesSelect = document.getElementById('examples')
+        const examplesMap = {}
+        examplesSelect.addEventListener('change', () => {
+            const selected = examplesSelect.value
+            selectExample(examplesMap[selected])
+        })
+
+        function selectExample(example) {
+            if (!example) {
+                return
+            }
+            templateEl.value = example.template
+            dataEl.value = example.data
+            tryParseTemplate() && tryParseData() && executeTemplate()
+        }
+
+        registerExamples()
+        selectExample(examplesMap[examplesSelect.value])
+
+        function registerExample(name, template, data) {
+            examplesMap[name] = { name, template, data }
+            const option = document.createElement('option')
+            option.value = name
+            option.innerText = name
+            examplesSelect.append(option)
+        }
+
+        function registerExamples() {
+            const examples = [
+                { name: "Nested range", template: 'Our items:\n{{- range .Products }}\n - {{ .Name }} for {{$.PriceUnit}}{{ .Price }} (tags: {{-range .Tags}} [{{.}}]{{else}} no tags available{{end}})\n{{- end }}', data: '{\n  "PriceUnit": "$",\n  "Products": [\n    { "Name": "Kiwi", "Price": 1.99, "Tags": ["Food", "Fruit"] },\n    { "Name": "Beef", "Price": 12.99, "Tags": ["Food", "Meat"] },\n    { "Name": "Scissors", "Price": 4.99, "Tags": ["Tools", "Kitchen"] },\n    { "Name": "New item", "Price": 99.99, "Tags": [] }\n  ]\n}' },
+                { name: "Docker inspect", template: 'Container "{{ .Name }}" ({{ index .State.Status 0 | upper }}{{ slice .State.Status 1 }})\nImage: {{ .Config.Image }} ({{ slice .Image 0 20 }})\n{{- if .Mounts }}\nMounts:\n{{- range .Mounts }}\n  - {{ .Type }} {{ .Source }} -> {{ .Destination }} ({{ .Mode }})\n{{- end }}\n{{- else }}\nNo mounts\n{{- end }}\n{{- $i := 0 }}\n{{- range $k, $port := .NetworkSettings.Ports }}\n{{- if not $port }}{{ continue }}{{ end }}\n{{- if eq $i 0 }}\nPorts:\n{{- end }}\n  - {{ $k }}\n{{- range $port }}\n    -> {{ .HostIp }}:{{ .HostPort }}\n{{- end }}\n{{- $i = 1 }}\n{{- end }}\n{{- $i = 0 }}\n{{- range $k, $_ := .NetworkSettings.Networks }}\n{{- if eq $i 0 }}\nNetworks:\n{{- end }}\n  - {{ $k }}\n{{- $i = 1 }}\n{{- end }}', data: '{\n    "Id": "b2f141eafd5d0c8e5dfd9dbf8511dc50602c200a3bdffc875347e71c6b49ff88",\n    "Created": "2025-01-05T21:51:03.426936745Z",\n    "Path": "/docker-entrypoint.sh",\n    "Args": [\n        "nginx",\n        "-g",\n        "daemon off;"\n    ],\n    "State": {\n        "Status": "running",\n        "Running": true,\n        "Paused": false,\n        "Restarting": false,\n        "OOMKilled": false,\n        "Dead": false,\n        "Pid": 1290,\n        "ExitCode": 0,\n        "Error": "",\n        "StartedAt": "2025-03-15T00:42:31.1083218Z",\n        "FinishedAt": "2025-03-15T00:42:29.0385707Z"\n    },\n    "Image": "sha256:f876bfc1cc63d905bb9c8ebc5adc98375bb8e22920959719d1a96e8f594868fa",\n    "ResolvConfPath": "/var/lib/docker/containers/b2f141eafd5d0c8e5dfd9dbf8511dc50602c200a3bdffc875347e71c6b49ff88/resolv.conf",\n    "HostnamePath": "/var/lib/docker/containers/b2f141eafd5d0c8e5dfd9dbf8511dc50602c200a3bdffc875347e71c6b49ff88/hostname",\n    "HostsPath": "/var/lib/docker/containers/b2f141eafd5d0c8e5dfd9dbf8511dc50602c200a3bdffc875347e71c6b49ff88/hosts",\n    "LogPath": "/var/lib/docker/containers/b2f141eafd5d0c8e5dfd9dbf8511dc50602c200a3bdffc875347e71c6b49ff88/b2f141eafd5d0c8e5dfd9dbf8511dc50602c200a3bdffc875347e71c6b49ff88-json.log",\n    "Name": "/ganymede-nginx",\n    "RestartCount": 0,\n    "Driver": "overlay2",\n    "Platform": "linux",\n    "MountLabel": "",\n    "ProcessLabel": "",\n    "AppArmorProfile": "",\n    "ExecIDs": null,\n    "HostConfig": {\n        "Binds": [\n            "T:\\\\Ganymede\\\\nginx.conf:/etc/nginx/nginx.conf:ro",\n            "T:\\\\Ganymede\\\\vods-storage:/data/videos:rw",\n            "U:\\\\Ganymede\\\\videos2:/data/videos2:rw"\n        ],\n        "ContainerIDFile": "",\n        "LogConfig": {\n            "Type": "json-file",\n            "Config": {}\n        },\n        "NetworkMode": "ganymede_default",\n        "PortBindings": {\n            "8080/tcp": [\n                {\n                    "HostIp": "",\n                    "HostPort": "4802"\n                }\n            ]\n        },\n        "RestartPolicy": {\n            "Name": "unless-stopped",\n            "MaximumRetryCount": 0\n        },\n        "AutoRemove": false,\n        "VolumeDriver": "",\n        "VolumesFrom": null,\n        "ConsoleSize": [\n            0,\n            0\n        ],\n        "CapAdd": null,\n        "CapDrop": null,\n        "CgroupnsMode": "host",\n        "Dns": [],\n        "DnsOptions": [],\n        "DnsSearch": [],\n        "ExtraHosts": [],\n        "GroupAdd": null,\n        "IpcMode": "private",\n        "Cgroup": "",\n        "Links": null,\n        "OomScoreAdj": 0,\n        "PidMode": "",\n        "Privileged": false,\n        "PublishAllPorts": false,\n        "ReadonlyRootfs": false,\n        "SecurityOpt": null,\n        "UTSMode": "",\n        "UsernsMode": "",\n        "ShmSize": 67108864,\n        "Runtime": "runc",\n        "Isolation": "",\n        "CpuShares": 0,\n        "Memory": 0,\n        "NanoCpus": 0,\n        "CgroupParent": "",\n        "BlkioWeight": 0,\n        "BlkioWeightDevice": null,\n        "BlkioDeviceReadBps": null,\n        "BlkioDeviceWriteBps": null,\n        "BlkioDeviceReadIOps": null,\n        "BlkioDeviceWriteIOps": null,\n        "CpuPeriod": 0,\n        "CpuQuota": 0,\n        "CpuRealtimePeriod": 0,\n        "CpuRealtimeRuntime": 0,\n        "CpusetCpus": "",\n        "CpusetMems": "",\n        "Devices": null,\n        "DeviceCgroupRules": null,\n        "DeviceRequests": null,\n        "MemoryReservation": 0,\n        "MemorySwap": 0,\n        "MemorySwappiness": null,\n        "OomKillDisable": false,\n        "PidsLimit": null,\n        "Ulimits": null,\n        "CpuCount": 0,\n        "CpuPercent": 0,\n        "IOMaximumIOps": 0,\n        "IOMaximumBandwidth": 0,\n        "MaskedPaths": [\n            "/proc/asound",\n            "/proc/acpi",\n            "/proc/kcore",\n            "/proc/keys",\n            "/proc/latency_stats",\n            "/proc/timer_list",\n            "/proc/timer_stats",\n            "/proc/sched_debug",\n            "/proc/scsi",\n            "/sys/firmware",\n            "/sys/devices/virtual/powercap"\n        ],\n        "ReadonlyPaths": [\n            "/proc/bus",\n            "/proc/fs",\n            "/proc/irq",\n            "/proc/sys",\n            "/proc/sysrq-trigger"\n        ]\n    },\n    "GraphDriver": {\n        "Data": {\n            "LowerDir": "/var/lib/docker/overlay2/97d6af0904ced3ada32efa5849682f13a80c9c62fbc12aea7de299d0c9b16dfb-init/diff:/var/lib/docker/overlay2/8c5ed5e4ca8e5d0346b39367cd5eb48df5bc34aaf9f79ac50a0763d9df5e365a/diff:/var/lib/docker/overlay2/65a2d07280ee5f392983cb76965bf265ec9c292477df3c016bffaaea87815d87/diff:/var/lib/docker/overlay2/5f0f1115899c65fd740d5cba1384ffad240edeb0825ec9a8fbcdfe0095d4173c/diff:/var/lib/docker/overlay2/8083819b280766498c3236c0c2a46346baddfb05ee0855334e8cd071004151d5/diff:/var/lib/docker/overlay2/c9d5dd7a8613394eff6b3fbc371d7aa1687888fb049dfe5da3130693b918bf27/diff:/var/lib/docker/overlay2/41fc25bfe607a058630967bd50e7803b887e03c8f73565fbb6c9ecaef8d1189d/diff:/var/lib/docker/overlay2/33a3d6b71faa76a5f6a9ca82454e7ffbd6564d105dac968310e2e4361ddd8526/diff",\n            "MergedDir": "/var/lib/docker/overlay2/97d6af0904ced3ada32efa5849682f13a80c9c62fbc12aea7de299d0c9b16dfb/merged",\n            "UpperDir": "/var/lib/docker/overlay2/97d6af0904ced3ada32efa5849682f13a80c9c62fbc12aea7de299d0c9b16dfb/diff",\n            "WorkDir": "/var/lib/docker/overlay2/97d6af0904ced3ada32efa5849682f13a80c9c62fbc12aea7de299d0c9b16dfb/work"\n        },\n        "Name": "overlay2"\n    },\n    "Mounts": [\n        {\n            "Type": "bind",\n            "Source": "T:\\\\Ganymede\\\\vods-storage",\n            "Destination": "/data/videos",\n            "Mode": "rw",\n            "RW": true,\n            "Propagation": "rprivate"\n        },\n        {\n            "Type": "bind",\n            "Source": "U:\\\\Ganymede\\\\videos2",\n            "Destination": "/data/videos2",\n            "Mode": "rw",\n            "RW": true,\n            "Propagation": "rprivate"\n        },\n        {\n            "Type": "bind",\n            "Source": "T:\\\\Ganymede\\\\nginx.conf",\n            "Destination": "/etc/nginx/nginx.conf",\n            "Mode": "ro",\n            "RW": false,\n            "Propagation": "rprivate"\n        }\n    ],\n    "Config": {\n        "Hostname": "b2f141eafd5d",\n        "Domainname": "",\n        "User": "",\n        "AttachStdin": false,\n        "AttachStdout": true,\n        "AttachStderr": true,\n        "ExposedPorts": {\n            "80/tcp": {},\n            "8080/tcp": {}\n        },\n        "Tty": false,\n        "OpenStdin": false,\n        "StdinOnce": false,\n        "Env": [\n            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",\n            "NGINX_VERSION=1.27.3",\n            "NJS_VERSION=0.8.7",\n            "NJS_RELEASE=1~bookworm",\n            "PKG_RELEASE=1~bookworm",\n            "DYNPKG_RELEASE=1~bookworm"\n        ],\n        "Cmd": [\n            "nginx",\n            "-g",\n            "daemon off;"\n        ],\n        "Image": "nginx",\n        "Volumes": null,\n        "WorkingDir": "",\n        "Entrypoint": [\n            "/docker-entrypoint.sh"\n        ],\n        "OnBuild": null,\n        "Labels": {\n            "com.docker.compose.config-hash": "f15b5e1310e2263b050312bb7e4f5d96dec57af0153fc12204cd55d470aef23f",\n            "com.docker.compose.container-number": "1",\n            "com.docker.compose.depends_on": "",\n            "com.docker.compose.image": "sha256:f876bfc1cc63d905bb9c8ebc5adc98375bb8e22920959719d1a96e8f594868fa",\n            "com.docker.compose.oneoff": "False",\n            "com.docker.compose.project": "ganymede",\n            "com.docker.compose.project.config_files": "T:\\\\Ganymede\\\\docker-compose.yml",\n            "com.docker.compose.project.working_dir": "T:\\\\Ganymede",\n            "com.docker.compose.service": "ganymede-nginx",\n            "com.docker.compose.version": "2.31.0",\n            "maintainer": "NGINX Docker Maintainers \\u003cdocker-maint@nginx.com\\u003e"\n        },\n        "StopSignal": "SIGQUIT"\n    },\n    "NetworkSettings": {\n        "Bridge": "",\n        "SandboxID": "124d7e3bb77d827d85569f6886538680520bb6f1e9c0e8de5287e181b4399dcb",\n        "SandboxKey": "/var/run/docker/netns/124d7e3bb77d",\n        "Ports": {\n            "80/tcp": null,\n            "8080/tcp": [\n                {\n                    "HostIp": "0.0.0.0",\n                    "HostPort": "4802"\n                }\n            ]\n        },\n        "HairpinMode": false,\n        "LinkLocalIPv6Address": "",\n        "LinkLocalIPv6PrefixLen": 0,\n        "SecondaryIPAddresses": null,\n        "SecondaryIPv6Addresses": null,\n        "EndpointID": "",\n        "Gateway": "",\n        "GlobalIPv6Address": "",\n        "GlobalIPv6PrefixLen": 0,\n        "IPAddress": "",\n        "IPPrefixLen": 0,\n        "IPv6Gateway": "",\n        "MacAddress": "",\n        "Networks": {\n            "ganymede_default": {\n                "IPAMConfig": null,\n                "Links": null,\n                "Aliases": [\n                    "ganymede-nginx",\n                    "ganymede-nginx"\n                ],\n                "MacAddress": "02:42:ac:1f:00:02",\n                "DriverOpts": null,\n                "NetworkID": "cd438863d6fe6ddc79decd9d2822f0c24e7634a7c7bfe3cc1977e6022cfe52b7",\n                "EndpointID": "a234309bfd87988297ccaa2dad293b3d35d41ebfa0d7a505970b465eb3855ac0",\n                "Gateway": "172.31.0.1",\n                "IPAddress": "172.31.0.2",\n                "IPPrefixLen": 16,\n                "IPv6Gateway": "",\n                "GlobalIPv6Address": "",\n                "GlobalIPv6PrefixLen": 0,\n                "DNSNames": [\n                    "ganymede-nginx",\n                    "b2f141eafd5d"\n                ]\n            }\n        }\n    }\n}' },
+            ]
+
+            for (let i = 0; i < examples.length; i++) {
+                const example = examples[i]
+                registerExample(example.name, example.template, example.data)
             }
         }
     </script>
