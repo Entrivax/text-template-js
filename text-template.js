@@ -1132,6 +1132,9 @@ function FieldNode(name) {
 }
 FieldNode.prototype = {
     eval(current) {
+        if (current == null || current === undefined) {
+            return undefined
+        }
         return current[this.name]
     }
 }
@@ -1249,7 +1252,7 @@ PipelineNode.prototype = {
     },
 
     executeS(stack) {
-        return this.eval(stack) ?? ''
+        return Template.stringOf(this.eval(stack))
     }
 }
 
@@ -1426,10 +1429,8 @@ RangeNode.prototype = {
         let out = ''
         range: for (let i = 0; i < array.length; i++) {
             const element = array[i]
-            if (this.elementToken === undefined) {
-                stack.push(element)
-            } else {
-                stack.push(undefined)
+            stack.push(element)
+            if (this.elementToken !== undefined) {
                 stack.defineVariable(this.elementToken.value, element)
                 if (this.indexToken !== undefined) {
                     stack.defineVariable(this.indexToken.value, i)
@@ -1603,20 +1604,14 @@ Template.isTrue = function(value) {
     return !!value
 }
 
+Template.stringOf = function(obj) {
+    if (obj === null || obj === undefined) return ''
+    return `${obj}`
+}
+
 Template.prototype = {
     _setupDefaultFuncs() {
         this.withFuncs({
-            "eq": (...args) => {
-                if (args.length < 2) {
-                    throw new Error("eq requires at least 2 arguments")
-                }
-                for (let i = 1; i < args.length; i++) {
-                    if (args[i] !== args[i - 1]) {
-                        return false
-                    }
-                }
-                return true
-            },
             "and": (...args) => {
                 for (let i = 0; i < args.length; i++) {
                     if (!Template.isTrue(args[i])) {
@@ -1633,13 +1628,45 @@ Template.prototype = {
                 }
                 return args[args.length - 1]
             },
+            "not": b => !Template.isTrue(b),
+            "eq": (...args) => {
+                if (args.length < 2) {
+                    throw new Error("eq requires at least 2 arguments")
+                }
+                for (let i = 1; i < args.length; i++) {
+                    if (args[i] !== args[i - 1]) {
+                        return false
+                    }
+                }
+                return true
+            },
             "ne": (a, b) => a !== b,
             "lt": (a, b) => a < b,
             "le": (a, b) => a <= b,
             "gt": (a, b) => a > b,
             "ge": (a, b) => a >= b,
-            "index": (a, i) => a[i],
-            "len": (a) => {
+            "index": (a, i) => {
+                if (Array.isArray(a)) {
+                    if (typeof i !== 'number' || isNaN(i)) {
+                        throw new Error("cannot index array with " + i)
+                    }
+                    if (i < 0) {
+                        return a[a.length - i]
+                    }
+                    return a[i]
+                }
+                if (a === null || a === undefined) {
+                    throw new Error("cannot index " + a)
+                }
+                return a[i]
+            },
+            "slice": (arr, start, end) => {
+                if (!Array.isArray(arr) && typeof arr !== 'string') {
+                    throw new Error("cannot slice " + arr)
+                }
+                return arr.slice(start, end)
+            },
+            "len": a => {
                 if (typeof a === 'string' || Array.isArray(a)) {
                     return a.length
                 }
@@ -1648,6 +1675,23 @@ Template.prototype = {
                 }
                 return 0
             },
+            "html": str => {
+                if (arguments.length !== 1) {
+                    throw new Error('expected 1 argument')
+                }
+                if (typeof str !== 'string') {
+                    str = Template.stringOf(str)
+                }
+                return str
+                    .replaceAll('&', '&amp;')
+                    .replaceAll('<', '&lt;')
+                    .replaceAll('>', '&gt;')
+                    .replaceAll('"', '&quot;')
+                    .replaceAll("'", '&#039;')
+            },
+            "json": obj => JSON.stringify(obj),
+            "urlquery": str => encodeURIComponent(str),
+            "log": (...args) => console.log(...args)
         })
     },
     withFuncs(funcMap) {
