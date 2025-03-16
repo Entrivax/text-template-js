@@ -262,6 +262,9 @@ Lexer.prototype = {
                 this._advance()
                 const c = this.src[this.pos]
                 switch (c) {
+                case '\\':
+                    buffer += '\\'
+                    break
                 case 'n':
                     buffer += '\n'
                     break
