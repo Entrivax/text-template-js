@@ -339,7 +339,7 @@
                         "token": "delimiter"
                     },
                     {
-                        "foreground": "918f89",
+                        "foreground": "6d685a",
                         "token": "delimiter.action"
                     },
                     {
@@ -348,11 +348,23 @@
                     },
                     {
                         "foreground": "e1c803",
+                        "token": "operator"
+                    },
+                    {
+                        "foreground": "e5419b",
+                        "token": "constant"
+                    },
+                    {
+                        "foreground": "e1c803",
                         "token": "identifier.root"
                     },
                     {
-                        "foreground": "29ada8",
+                        "foreground": "d79227",
                         "token": "identifier.variable"
+                    },
+                    {
+                        "foreground": "2cc9ad",
+                        "token": "identifier"
                     },
                     {
                         "foreground": "7ecd2a",
@@ -366,10 +378,9 @@
                 "colors": {
                     "editor.foreground": "#BDAE9D",
                     "editor.background": "#1d1614",
-                    "editor.selectionBackground": "#C3DCFF",
-                    "editor.lineHighlightBackground": "#3A312C",
-                    "editorCursor.foreground": "#889AFF",
-                    "editorWhitespace.foreground": "#BFBFBF"
+                    "editor.selectionBackground": "#ffe9ad42",
+                    "editorCursor.foreground": "#ffe9ad",
+                    "editorWhitespace.foreground": "#ffe9ad22"
                 }
             }
         }
@@ -385,8 +396,10 @@
                     'end',
                 ],
 
+                constants: ['true', 'false', 'nil'],
+
                 operators: [':=', '='],
-                symbols: /[=:|]/,
+                symbols: /[=:|]+/,
 
                 digits: /\d+/,
 
@@ -414,6 +427,7 @@
                         [/\$/, 'identifier.root'],
                         [/[a-zA-Z_$][\w]*/, {
                             cases: {
+                                '@constants': 'constant',
                                 '@keywords': 'keyword',
                                 '@default': 'identifier'
                             }
@@ -422,11 +436,11 @@
                         // delimiters and symbols
                         [/@symbols/, {
                             cases: {
-                                '@operators': 'delimiter',
+                                '@operators': 'operator',
                                 '@default': ''
                             }
                         }],
-                        [/[.]/, 'delimiter'],
+                        [/[.,]/, 'delimiter'],
 
                         // strings
                         [/"/, 'string', '@string_double'],
