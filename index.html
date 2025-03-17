@@ -227,7 +227,7 @@
             const markers = []
             try {
                 const tmplSrc = templateModel.getValue()
-                const tmpl = Template.MustParse(tmplSrc).withFuncs(additionalPlaygroundFunctions)
+                const tmpl = Template.mustParse(tmplSrc).withFuncs(additionalPlaygroundFunctions)
                 template = tmpl
             } catch (err) {
                 if (err.errors?.length) {
@@ -265,7 +265,7 @@
                 return
             }
             try {
-                outputEl.innerText = template.executeS(currentData)
+                outputEl.innerText = template.sExecute(currentData)
                 outputErrEl.style.display = ''
             } catch (err) {
                 outputEl.innerText = ''

@@ -10,7 +10,7 @@
             const templateSrc = `Hello {{ if trim .Name }}{{ .Name }}
             {{- else }}World{{ end }}!`
             const context = { Name: 'Test' }
-            const template = Template.MustParse(templateSrc).withFuncs({
+            const template = Template.mustParse(templateSrc).withFuncs({
                 trim: (val) => {
                     if (typeof val !== 'string') {
                         throw new Error('expected string value')
@@ -21,13 +21,13 @@
             console.log(template)
             console.log('template:', templateSrc);
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
         }
         console.log('-------------------------------');
         {
             const templateSrc = `Hello {{ $a := 1 }}{{ $a }}`
             const context = { }
-            const template = Template.MustParse(templateSrc).withFuncs({
+            const template = Template.mustParse(templateSrc).withFuncs({
                 trim: (val) => {
                     if (typeof val !== 'string') {
                         throw new Error('expected string value')
@@ -38,48 +38,48 @@
             console.log(template)
             console.log('template:', templateSrc);
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
         }
         console.log('-------------------------------');
         {
             const templateSrc = `There is {{if lt (len .Users) 2}}one user{{else}}{{ len .Users }} users{{end}}`
-            const template = Template.MustParse(templateSrc)
+            const template = Template.mustParse(templateSrc)
             console.log(template)
             let context = { Name: 'Test', Users: ['Alice'] }
             console.log('template:', templateSrc);
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
             context = { Name: 'Test', Users: ['Alice', 'Bob'] }
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
         }
         console.log('-------------------------------');
         {
             const templateSrc = `Hello {{- range .Users }} {{ . }}{{ else }} World{{ end }}!`
-            const template = Template.MustParse(templateSrc)
+            const template = Template.mustParse(templateSrc)
             console.log(template)
             let context = { Name: 'Test', Users: [] }
             console.log('template:', templateSrc);
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
             context = { Name: 'Test', Users: ['Alice', 'Bob'] }
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
         }
         console.log('-------------------------------');
         {
             const templateSrc = `Hello {{- range $user := .Users }} {{ $user }}{{ end }}!`
-            const template = Template.MustParse(templateSrc)
+            const template = Template.mustParse(templateSrc)
             console.log(template)
             const context = { Name: 'Test', Users: ['Alice', 'Bob'] }
             console.log('template:', templateSrc);
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
         }
         console.log('-------------------------------');
         {
             const templateSrc = `Users:\n{{ range $i, $user := .Users }}  {{ add $i 1 }}. {{ $user }}\n{{ end }}`
-            const template = Template.MustParse(templateSrc).withFuncs({
+            const template = Template.mustParse(templateSrc).withFuncs({
                 add: (a, b) => {
                     return a + b
                 }
@@ -88,13 +88,13 @@
             const context = { Name: 'Test', Users: ['Alice', 'Bob'] }
             console.log('template:', templateSrc);
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
         }
         console.log('-------------------------------');
         {
             const templateSrc = `Hello {{ with trim .Name }}{{ . }}{{ end }}`
             const context = { Name: "  Bob  " }
-            const template = Template.MustParse(templateSrc).withFuncs({
+            const template = Template.mustParse(templateSrc).withFuncs({
                 trim: (val) => {
                     if (typeof val !== 'string') {
                         throw new Error('expected string value')
@@ -105,7 +105,7 @@
             console.log(template)
             console.log('template:', templateSrc);
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
         }
         console.log('-------------------------------');
         {
@@ -114,7 +114,7 @@
 {{- define "name" }}{{.}}{{end-}}
 {{ template "test" . }}`
             const context = { Name: 'Test' }
-            const template = Template.MustParse(templateSrc).withFuncs({
+            const template = Template.mustParse(templateSrc).withFuncs({
                 trim: (val) => {
                     if (typeof val !== 'string') {
                         throw new Error('expected string value')
@@ -125,7 +125,7 @@
             console.log(template)
             console.log('template:', templateSrc);
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
         }
         console.log('-------------------------------');
         {
@@ -133,7 +133,7 @@
 {{- define "test" }}Hello {{ block "name" .Name }}{{ len . }}{{end}}!{{end-}}
 {{ template "test" . }}`
             const context = { Name: 'Test' }
-            const template = Template.MustParse(templateSrc).withFuncs({
+            const template = Template.mustParse(templateSrc).withFuncs({
                 trim: (val) => {
                     if (typeof val !== 'string') {
                         throw new Error('expected string value')
@@ -144,7 +144,7 @@
             console.log(template)
             console.log('template:', templateSrc);
             console.log('context:', context)
-            console.log(template.executeS(context))
+            console.log(template.sExecute(context))
         }
     </script>
 </head>
