@@ -1715,10 +1715,11 @@ Template.prototype = {
                 }
                 return 0
             },
-            "html": str => {
-                if (arguments.length !== 1) {
+            "html": (...args) => {
+                if (args.length !== 1) {
                     throw new Error('expected 1 argument')
                 }
+                const str = args[0]
                 if (typeof str !== 'string') {
                     str = Template.stringOf(str)
                 }
