@@ -1719,7 +1719,7 @@ Template.prototype = {
                 if (args.length !== 1) {
                     throw new Error('expected 1 argument')
                 }
-                const str = args[0]
+                let str = args[0]
                 if (typeof str !== 'string') {
                     str = Template.stringOf(str)
                 }
